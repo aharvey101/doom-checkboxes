@@ -63,7 +63,26 @@ export class SpacetimeDBCheckboxApp {
     // Initial render
     this.render();
     
+    // Auto-connect to SpacetimeDB for seamless UX
+    this.autoConnect();
+    
     console.log('Canvas initialized successfully');
+  }
+  
+  // Automatically connect to SpacetimeDB in the background
+  private async autoConnect(): Promise<void> {
+    try {
+      console.log('🔄 Auto-connecting to SpacetimeDB...');
+      const connected = await this.connect();
+      if (connected) {
+        console.log('✅ Auto-connection successful');
+      } else {
+        console.log('⚠️ Auto-connection failed - manual connection available');
+      }
+    } catch (error) {
+      console.log('⚠️ Auto-connection failed:', error.message);
+      console.log('💡 Use "Connect to SpacetimeDB" button to connect manually');
+    }
   }
   
   // Public connect method (called from HTML)
