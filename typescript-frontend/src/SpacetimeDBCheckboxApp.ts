@@ -1,7 +1,4 @@
-import { MemoryManager, type RenderStrategy } from './MemoryManager.js';
-import { ViewportManager } from './ViewportManager.js';
-import { CanvasRenderer } from './CanvasRenderer.js';
-import { NavigationController } from './NavigationController.js';
+import { CheckboxDatabase, CheckboxChunk } from './generated/index.js';
 
 interface CheckboxState {
   checked: boolean;
@@ -10,303 +7,431 @@ interface CheckboxState {
 export class SpacetimeDBCheckboxApp {
   private canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
-  private checkboxStates: Map<string, CheckboxState> = new Map();
+  private container: HTMLElement | null = null;
+  
+  // Grid configuration
+  private readonly gridSize = 100;
+  private readonly cellSize = 32;
+  private readonly viewportWidth = 800;
+  private readonly viewportHeight = 600;
+  private readonly viewportCols = Math.floor(800 / 32); // 25 cols
+  private readonly viewportRows = Math.floor(600 / 32); // 18 rows
+  
+  // Navigation state
+  private currentX = 0;
+  private currentY = 0;
+  private viewportX = 0;
+  private viewportY = 0;
+  
+  // Checkbox state (cached from SpacetimeDB)
   private chunkData: Map<number, Uint8Array> = new Map();
+  private checkedCount = 0;
   
-  // Large canvas components
-  private memoryManager: MemoryManager;
-  private viewportManager: ViewportManager | null = null;
-  private canvasRenderer: CanvasRenderer | null = null;
-  private navigationController: NavigationController | null = null;
-  private renderStrategy: RenderStrategy;
+  // Configuration
+  private serverUrl: string;
+  private databaseName: string;
   
-  // Dynamic grid configuration based on memory capabilities
-  private gridCols: number = 100; // Target: 100x100 grid
-  private gridRows: number = 100;
-  private canvasWidth: number = 3200; // Target: 3200x3200px
-  private canvasHeight: number = 3200;
-  private viewportWidth: number = 800;
-  private viewportHeight: number = 600;
-  
-  private readonly CELL_SIZE = 32;
-  private readonly SERVER_URL: string;
+  // Database client
+  private checkboxDatabase: CheckboxDatabase;
 
-  constructor(serverUrl?: string) {
-    // Access environment variables for Vite
-    const envUrl = (import.meta as any).env?.VITE_SPACETIMEDB_URL;
-    this.SERVER_URL = serverUrl || envUrl || 'http://localhost:3000';
-    console.log('SpacetimeDB server URL:', this.SERVER_URL);
-    this.memoryManager = new MemoryManager();
-    this.renderStrategy = this.memoryManager.getFallbackStrategy();
-    this.adjustConfigurationForStrategy();
+  constructor(serverUrl: string = 'http://localhost:3000', databaseName: string = 'checkboxes-local-demo') {
+    this.serverUrl = serverUrl;
+    this.databaseName = databaseName;
+    this.checkboxDatabase = new CheckboxDatabase(serverUrl, databaseName);
+    console.log(`SpacetimeDB Checkbox App initialized with ${serverUrl} / ${databaseName}`);
   }
   
-  private showConnectionError(message: string): void {
-    const errorDiv = document.createElement('div');
-    errorDiv.style.cssText = 'position:fixed;top:20px;right:20px;background:#ff4444;color:white;padding:15px;border-radius:5px;z-index:9999;max-width:300px;';
-    errorDiv.textContent = message;
-    document.body.appendChild(errorDiv);
-    setTimeout(() => errorDiv.remove(), 5000);
-  }
-
-  private adjustConfigurationForStrategy(): void {
-    const config = this.memoryManager.getConfigForStrategy(this.renderStrategy);
-    this.gridCols = Math.min(this.gridCols, config.maxCells);
-    this.gridRows = Math.min(this.gridRows, config.maxCells);
-    this.canvasWidth = this.gridCols * this.CELL_SIZE;
-    this.canvasHeight = this.gridRows * this.CELL_SIZE;
+  // Initialize canvas manually (called from HTML)
+  public initializeCanvas(canvas: HTMLCanvasElement): void {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
     
-    console.log(`Adjusted grid to ${this.gridCols}×${this.gridRows} for ${this.renderStrategy} strategy`);
+    if (!this.ctx) {
+      throw new Error('Failed to get 2D context from canvas');
+    }
+    
+    // Set canvas size
+    this.canvas.width = this.gridSize * this.cellSize;
+    this.canvas.height = this.gridSize * this.cellSize;
+    
+    // Set canvas viewport styling
+    this.canvas.style.transform = 'translate(0px, 0px)';
+    
+    // Set up event listeners for navigation
+    this.setupEventListeners();
+    
+    // Initial render
+    this.render();
+    
+    console.log('Canvas initialized successfully');
   }
-
-  async initializeConnection(): Promise<boolean> {
+  
+  // Public connect method (called from HTML)
+  public async connect(): Promise<boolean> {
+    console.log('Connecting to SpacetimeDB...');
+    
     try {
-      console.log('Demo mode: SpacetimeDB connection disabled for deployment');
-      this.showConnectionInfo('Running in demo mode - changes not synchronized');
+      // Connect to SpacetimeDB
+      const connected = await this.checkboxDatabase.connect();
+      if (!connected) {
+        console.error('Failed to connect to SpacetimeDB');
+        return false;
+      }
+      
+      // Subscribe to database updates
+      this.subscribeToUpdates();
+      
+      // Load initial state
+      await this.loadInitialState();
+      
+      console.log('Connected to SpacetimeDB successfully');
       return true;
     } catch (error) {
-      console.error('Connection initialization failed:', error);
-      this.showConnectionError('Unable to connect to SpacetimeDB server. Running in offline mode.');
+      console.error('Failed to connect to SpacetimeDB:', error);
       return false;
     }
   }
-
-  private showConnectionInfo(message: string): void {
-    const infoDiv = document.createElement('div');
-    infoDiv.style.cssText = 'position:fixed;top:20px;left:20px;background:#2196F3;color:white;padding:15px;border-radius:5px;z-index:9999;max-width:300px;';
-    infoDiv.textContent = message;
-    document.body.appendChild(infoDiv);
-    setTimeout(() => infoDiv.remove(), 3000);
+  
+  // Public method to toggle a checkbox (called from HTML)
+  public async toggleCheckbox(x: number, y: number): Promise<void> {
+    await this.toggleCheckboxInternal(y, x); // Note: internal method expects row, col
   }
-
-  private subscribeToChunkUpdates(): void {
-    console.log('Subscription setup skipped in demo mode');
+  
+  // Get checkbox statistics (called from HTML)
+  public getCheckboxCount(): { total: number; checked: number } {
+    return { total: this.gridSize * this.gridSize, checked: this.checkedCount };
   }
-
-  private onInsert(ctx: any, row: any): void {
-    // Handle new chunk data
-    this.processChunkUpdate(row);
-  }
-
-  private onUpdate(ctx: any, oldRow: any, newRow: any): void {
-    // Handle chunk updates
-    this.processChunkUpdate(newRow);
-  }
-
-  private processChunkUpdate(chunk: any): void {
-    if (!chunk || typeof chunk.chunk_id !== 'number') return;
-    
-    try {
-      const chunkId = chunk.chunk_id;
-      const state = chunk.state instanceof Uint8Array ? chunk.state : new Uint8Array(chunk.state);
-      
-      this.chunkData.set(chunkId, state);
-      this.markChunkForRerender(chunkId);
-    } catch (error) {
-      console.error('Error processing chunk update:', error);
-    }
-  }
-
-  private markChunkForRerender(chunkId: number): void {
-    if (!this.canvasRenderer) return;
-    
-    const chunkSize = 1000000; // 1M checkboxes per chunk
-    const startRow = Math.floor(chunkId * chunkSize / this.gridCols);
-    const endRow = Math.floor((chunkId + 1) * chunkSize / this.gridCols);
-    
-    for (let row = startRow; row < endRow && row < this.gridRows; row++) {
-      this.canvasRenderer.markRowForRerender(row);
-    }
-  }
-
-  private getCheckboxState(row: number, col: number): boolean {
-    const globalIndex = row * this.gridCols + col;
-    const chunkId = Math.floor(globalIndex / 1000000); // 1M checkboxes per chunk
-    const localIndex = globalIndex % 1000000;
-    
-    const chunk = this.chunkData.get(chunkId);
-    if (!chunk) return false;
-    
-    const byteIndex = Math.floor(localIndex / 8);
-    const bitIndex = localIndex % 8;
-    
-    if (byteIndex >= chunk.length) return false;
-    
-    return (chunk[byteIndex] & (1 << bitIndex)) !== 0;
-  }
-
-  private async setCheckboxState(row: number, col: number, checked: boolean): Promise<void> {
-    try {
-      const globalIndex = row * this.gridCols + col;
-      const chunkId = Math.floor(globalIndex / 1000000);
-      const localIndex = globalIndex % 1000000;
-      
-      // Update local state immediately for responsiveness
-      let chunk = this.chunkData.get(chunkId);
-      if (!chunk) {
-        chunk = new Uint8Array(125000); // 125KB per chunk
-        this.chunkData.set(chunkId, chunk);
-      }
-      
-      const byteIndex = Math.floor(localIndex / 8);
-      const bitIndex = localIndex % 8;
-      
-      if (byteIndex < chunk.length) {
-        if (checked) {
-          chunk[byteIndex] |= (1 << bitIndex);
-        } else {
-          chunk[byteIndex] &= ~(1 << bitIndex);
-        }
-        
-        // Mark for re-render
-        this.markChunkForRerender(chunkId);
-      }
-      
-      console.log(`Demo mode: Checkbox at ${row},${col} set to ${checked} (local only)`);
-      
-    } catch (error) {
-      console.error('Error setting checkbox state:', error);
-    }
-  }
-
-  async initialize(): Promise<boolean> {
-    console.log('Initializing SpacetimeDB Checkbox App...');
-    
-    // Initialize connection
-    const connected = await this.initializeConnection();
-    
-    // Set up canvas
-    this.setupCanvas();
-    
-    // Initialize components
-    this.initializeComponents();
-    
-    console.log('SpacetimeDB Checkbox App initialization complete');
-    return connected;
-  }
-
+  
+  // Set up canvas and container
   private setupCanvas(): void {
-    const container = document.getElementById('viewport-container');
-    if (!container) {
-      throw new Error('Container element not found');
+    this.container = document.getElementById('grid-container');
+    if (!this.container) {
+      throw new Error('Container element #grid-container not found');
     }
     
-    // Apply container styles
-    container.style.cssText = `
+    // Clear and set up container
+    this.container.innerHTML = '';
+    this.container.style.cssText = `
       position: relative;
       width: ${this.viewportWidth}px;
       height: ${this.viewportHeight}px;
       border: 2px solid #333;
       overflow: hidden;
-      background: #f0f0f0;
       margin: 20px auto;
       border-radius: 8px;
       box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+      background: white;
     `;
     
+    // Create canvas
     this.canvas = document.createElement('canvas');
-    this.canvas.width = this.canvasWidth;
-    this.canvas.height = this.canvasHeight;
+    this.canvas.width = this.gridSize * this.cellSize;
+    this.canvas.height = this.gridSize * this.cellSize;
     this.canvas.style.cssText = `
       position: absolute;
       top: 0;
       left: 0;
       cursor: pointer;
-      image-rendering: pixelated;
-      image-rendering: -moz-crisp-edges;
+      transition: transform 0.1s ease-out;
     `;
     
-    container.appendChild(this.canvas);
+    this.container.appendChild(this.canvas);
     
     this.ctx = this.canvas.getContext('2d');
     if (!this.ctx) {
       throw new Error('Could not get canvas context');
     }
   }
-
-  private initializeComponents(): void {
-    if (!this.canvas || !this.ctx) return;
-    
-    this.viewportManager = new ViewportManager(
-      this.canvasWidth,
-      this.canvasHeight,
-      this.viewportWidth,
-      this.viewportHeight
-    );
-    
-    this.canvasRenderer = new CanvasRenderer(
-      this.ctx,
-      this.gridCols,
-      this.gridRows,
-      this.CELL_SIZE,
-      this.renderStrategy,
-      (row: number, col: number) => this.getCheckboxState(row, col)
-    );
-    
-    this.navigationController = new NavigationController(
-      this.viewportManager,
-      (x: number, y: number) => this.handleCanvasClick(x, y)
-    );
-    
-    // Set up event listeners
-    this.setupEventListeners();
-    
-    // Initial render
-    this.renderLoop();
-  }
-
+  
+  // Set up event listeners
   private setupEventListeners(): void {
-    if (!this.canvas || !this.navigationController) return;
+    if (!this.canvas) return;
     
-    // Mouse events for clicking and navigation
+    // Canvas click events
     this.canvas.addEventListener('click', (e) => {
-      this.navigationController?.handleClick(e);
+      const rect = this.canvas!.getBoundingClientRect();
+      const x = e.clientX - rect.left + this.viewportX;
+      const y = e.clientY - rect.top + this.viewportY;
+      const col = Math.floor(x / this.cellSize);
+      const row = Math.floor(y / this.cellSize);
+      
+      if (row >= 0 && row < this.gridSize && col >= 0 && col < this.gridSize) {
+        this.toggleCheckboxInternal(row, col);
+      }
     });
     
-    // Keyboard events for navigation
+    // Keyboard navigation
     document.addEventListener('keydown', (e) => {
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.key)) {
+      let moved = false;
+      
+      switch (e.key) {
+        case 'ArrowUp':
+          if (this.currentY > 0) {
+            this.currentY--;
+            moved = true;
+          }
+          break;
+        case 'ArrowDown':
+          if (this.currentY < this.gridSize - 1) {
+            this.currentY++;
+            moved = true;
+          }
+          break;
+        case 'ArrowLeft':
+          if (this.currentX > 0) {
+            this.currentX--;
+            moved = true;
+          }
+          break;
+        case 'ArrowRight':
+          if (this.currentX < this.gridSize - 1) {
+            this.currentX++;
+            moved = true;
+          }
+          break;
+        case ' ':
+          e.preventDefault();
+          this.toggleCheckboxInternal(this.currentY, this.currentX);
+          return;
+      }
+      
+      if (moved) {
         e.preventDefault();
-        this.navigationController?.handleKeydown(e);
+        this.updateViewport();
+        this.updateStats();
       }
     });
   }
-
-  private handleCanvasClick(canvasX: number, canvasY: number): void {
-    const col = Math.floor(canvasX / this.CELL_SIZE);
-    const row = Math.floor(canvasY / this.CELL_SIZE);
+  
+  // Subscribe to SpacetimeDB updates
+  private subscribeToUpdates(): void {
+    this.checkboxDatabase.onCheckboxChunkInsert((chunk: CheckboxChunk) => {
+      console.log('Chunk inserted:', chunk.chunk_id);
+      this.chunkData.set(chunk.chunk_id, new Uint8Array(chunk.state));
+      this.render();
+    });
     
-    if (row >= 0 && row < this.gridRows && col >= 0 && col < this.gridCols) {
-      const currentState = this.getCheckboxState(row, col);
-      this.setCheckboxState(row, col, !currentState);
+    this.checkboxDatabase.onCheckboxChunkUpdate((oldRow: CheckboxChunk, newRow: CheckboxChunk) => {
+      console.log('Chunk updated:', newRow.chunk_id);
+      this.chunkData.set(newRow.chunk_id, new Uint8Array(newRow.state));
+      this.render();
+    });
+  }
+  
+  // Load initial state from SpacetimeDB  
+  public async loadInitialState(): Promise<void> {
+    try {
+      const chunks = await this.checkboxDatabase.getAllChunks();
+      console.log(`Loaded ${chunks.length} chunks from SpacetimeDB`);
+      
+      for (const chunk of chunks) {
+        this.chunkData.set(chunk.chunk_id, new Uint8Array(chunk.state));
+      }
+      
+      this.render();
+      this.updateStats();
+    } catch (error) {
+      console.error('Failed to load initial state:', error);
     }
   }
-
-  private renderLoop(): void {
-    if (!this.canvasRenderer || !this.viewportManager) return;
+  
+  // Toggle a checkbox and sync to SpacetimeDB
+  private async toggleCheckboxInternal(row: number, col: number): Promise<void> {
+    const globalIndex = row * this.gridSize + col;
+    const chunkId = Math.floor(globalIndex / 1000000); // 1M checkboxes per chunk
+    const bitOffset = globalIndex % 1000000;
     
-    const viewport = this.viewportManager.getViewport();
-    this.canvasRenderer.render(viewport);
+    // Get current state
+    const currentState = this.getCheckboxState(row, col);
+    const newState = !currentState;
     
-    // Update canvas transform for panning
-    if (this.canvas) {
-      this.canvas.style.transform = `translate(${-viewport.x}px, ${-viewport.y}px)`;
+    try {
+      // Update SpacetimeDB first
+      await this.checkboxDatabase.updateCheckbox(chunkId, bitOffset, newState);
+      
+      // Update local cache immediately for responsiveness
+      let chunk = this.chunkData.get(chunkId);
+      if (!chunk) {
+        chunk = new Uint8Array(125000); // 125KB for 1M bits
+        this.chunkData.set(chunkId, chunk);
+        
+        // Create chunk in database if it doesn't exist
+        await this.checkboxDatabase.addChunk(chunkId);
+      }
+      
+      const byteIndex = Math.floor(bitOffset / 8);
+      const bitIndex = bitOffset % 8;
+      
+      if (byteIndex < chunk.length) {
+        if (newState) {
+          chunk[byteIndex] |= (1 << bitIndex);
+        } else {
+          chunk[byteIndex] &= ~(1 << bitIndex);
+        }
+      }
+      
+      this.render();
+      this.updateStats();
+      
+      console.log(`Toggled checkbox (${row}, ${col}) to ${newState}`);
+      
+    } catch (error) {
+      console.error('Failed to toggle checkbox:', error);
+      this.showStatus(`Failed to update: ${error.message}`, 'error');
+      setTimeout(() => this.hideStatus(), 3000);
     }
+  }
+  
+  // Get checkbox state from chunk data
+  private getCheckboxState(row: number, col: number): boolean {
+    const globalIndex = row * this.gridSize + col;
+    const chunkId = Math.floor(globalIndex / 1000000);
+    const bitOffset = globalIndex % 1000000;
     
-    // Continue render loop
+    const chunk = this.chunkData.get(chunkId);
+    if (!chunk) return false;
+    
+    const byteIndex = Math.floor(bitOffset / 8);
+    const bitIndex = bitOffset % 8;
+    
+    if (byteIndex >= chunk.length) return false;
+    
+    return (chunk[byteIndex] & (1 << bitIndex)) !== 0;
+  }
+  
+  // Update viewport to follow current position
+  private updateViewport(): void {
+    const centerX = this.currentX * this.cellSize;
+    const centerY = this.currentY * this.cellSize;
+    
+    // Calculate desired viewport position to center current position
+    this.viewportX = centerX - this.viewportWidth / 2;
+    this.viewportY = centerY - this.viewportHeight / 2;
+    
+    // Clamp to grid boundaries
+    this.viewportX = Math.max(0, Math.min(this.viewportX, this.gridSize * this.cellSize - this.viewportWidth));
+    this.viewportY = Math.max(0, Math.min(this.viewportY, this.gridSize * this.cellSize - this.viewportHeight));
+    
+    // Update canvas transform
+    if (this.canvas) {
+      this.canvas.style.transform = `translate(${-this.viewportX}px, ${-this.viewportY}px)`;
+    }
+  }
+  
+  // Render the grid
+  private render(): void {
+    if (!this.ctx) return;
+    
+    const ctx = this.ctx;
+    
+    // Clear canvas
+    ctx.clearRect(0, 0, this.gridSize * this.cellSize, this.gridSize * this.cellSize);
+    
+    // Draw grid and checkboxes
+    for (let row = 0; row < this.gridSize; row++) {
+      for (let col = 0; col < this.gridSize; col++) {
+        const x = col * this.cellSize;
+        const y = row * this.cellSize;
+        const isChecked = this.getCheckboxState(row, col);
+        const isCurrent = row === this.currentY && col === this.currentX;
+        
+        // Draw cell background
+        ctx.fillStyle = isChecked ? '#4CAF50' : 'white';
+        ctx.fillRect(x, y, this.cellSize, this.cellSize);
+        
+        // Draw cell border
+        ctx.strokeStyle = isCurrent ? '#2196F3' : '#ccc';
+        ctx.lineWidth = isCurrent ? 3 : 1;
+        ctx.strokeRect(x, y, this.cellSize, this.cellSize);
+        
+        // Draw checkmark
+        if (isChecked) {
+          ctx.fillStyle = 'white';
+          ctx.font = '20px Arial';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('✓', x + this.cellSize / 2, y + this.cellSize / 2);
+        }
+      }
+    }
+  }
+  
+  // Start render loop
+  private renderLoop(): void {
+    this.render();
     requestAnimationFrame(() => this.renderLoop());
   }
-
+  
+  // Update statistics display
+  private updateStats(): void {
+    let checkedCount = 0;
+    
+    // Count checked checkboxes
+    for (const chunk of this.chunkData.values()) {
+      for (const byte of chunk) {
+        for (let bit = 0; bit < 8; bit++) {
+          if (byte & (1 << bit)) {
+            checkedCount++;
+          }
+        }
+      }
+    }
+    
+    const viewportStartCol = Math.floor(this.viewportX / this.cellSize);
+    const viewportEndCol = Math.min(this.gridSize - 1, viewportStartCol + this.viewportCols - 1);
+    const viewportStartRow = Math.floor(this.viewportY / this.cellSize);
+    const viewportEndRow = Math.min(this.gridSize - 1, viewportStartRow + this.viewportRows - 1);
+    
+    const positionInfo = document.getElementById('viewportPosition');
+    const checkedCountEl = document.getElementById('checkedCount');
+    const viewportInfo = document.getElementById('viewport-info');
+    
+    if (positionInfo) positionInfo.textContent = `${this.currentX}, ${this.currentY}`;
+    if (checkedCountEl) checkedCountEl.textContent = `${checkedCount}`;
+    if (viewportInfo) viewportInfo.textContent = `Viewport: ${viewportStartCol}-${viewportEndCol} × ${viewportStartRow}-${viewportEndRow}`;
+    
+    // Store checked count for external access
+    this.checkedCount = checkedCount;
+  }
+  
+  // Show status message
+  private showStatus(message: string, type: 'info' | 'error' = 'info'): void {
+    let status = document.querySelector('.status') as HTMLElement;
+    if (!status) {
+      status = document.createElement('div');
+      status.className = 'status';
+      status.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 10px 15px;
+        border-radius: 5px;
+        color: white;
+        font-weight: bold;
+        z-index: 1000;
+      `;
+      document.body.appendChild(status);
+    }
+    
+    status.textContent = message;
+    status.style.background = type === 'info' ? '#2196F3' : '#f44336';
+    status.style.display = 'block';
+  }
+  
+  // Hide status message
+  private hideStatus(): void {
+    const status = document.querySelector('.status') as HTMLElement;
+    if (status) {
+      status.style.display = 'none';
+    }
+  }
+  
   // Public API
+  public isConnected(): boolean {
+    return this.checkboxDatabase.isConnected();
+  }
+  
   public getGridSize(): { rows: number; cols: number } {
-    return { rows: this.gridRows, cols: this.gridCols };
-  }
-
-  public getViewport() {
-    return this.viewportManager?.getViewport();
-  }
-
-  public panTo(x: number, y: number): void {
-    this.viewportManager?.panTo(x, y);
+    return { rows: this.gridSize, cols: this.gridSize };
   }
 }
