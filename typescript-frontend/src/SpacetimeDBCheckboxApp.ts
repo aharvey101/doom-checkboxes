@@ -1,4 +1,4 @@
-import { CheckboxDatabase, CheckboxChunk } from './generated/index.js';
+import { CheckboxDatabase, CheckboxChunk } from './generated/CheckboxDatabase.js';
 
 interface CheckboxState {
   checked: boolean;
@@ -29,16 +29,16 @@ export class SpacetimeDBCheckboxApp {
   
   // Configuration
   private serverUrl: string;
-  private databaseName: string;
+  private databaseAddress: string;
   
   // Database client
   private checkboxDatabase: CheckboxDatabase;
 
-  constructor(serverUrl: string = 'http://localhost:3000', databaseName: string = 'checkboxes-local-demo') {
+  constructor(serverUrl: string = 'http://localhost:3000', databaseAddress: string = 'checkboxes-local-demo') {
     this.serverUrl = serverUrl;
-    this.databaseName = databaseName;
-    this.checkboxDatabase = new CheckboxDatabase(serverUrl, databaseName);
-    console.log(`SpacetimeDB Checkbox App initialized with ${serverUrl} / ${databaseName}`);
+    this.databaseAddress = databaseAddress;
+    this.checkboxDatabase = new CheckboxDatabase(serverUrl, databaseAddress);
+    console.log(`SpacetimeDB Checkbox App initialized with ${serverUrl} / ${databaseAddress}`);
   }
   
   // Initialize canvas manually (called from HTML)
@@ -206,14 +206,14 @@ export class SpacetimeDBCheckboxApp {
   // Subscribe to SpacetimeDB updates
   private subscribeToUpdates(): void {
     this.checkboxDatabase.onCheckboxChunkInsert((chunk: CheckboxChunk) => {
-      console.log('Chunk inserted:', chunk.chunk_id);
-      this.chunkData.set(chunk.chunk_id, new Uint8Array(chunk.state));
+      console.log('Chunk inserted:', chunk.chunkId);
+      this.chunkData.set(chunk.chunkId, new Uint8Array(chunk.state));
       this.render();
     });
     
-    this.checkboxDatabase.onCheckboxChunkUpdate((oldRow: CheckboxChunk, newRow: CheckboxChunk) => {
-      console.log('Chunk updated:', newRow.chunk_id);
-      this.chunkData.set(newRow.chunk_id, new Uint8Array(newRow.state));
+    this.checkboxDatabase.onCheckboxChunkUpdate((newRow: CheckboxChunk) => {
+      console.log('Chunk updated:', newRow.chunkId);
+      this.chunkData.set(newRow.chunkId, new Uint8Array(newRow.state));
       this.render();
     });
   }
@@ -225,7 +225,7 @@ export class SpacetimeDBCheckboxApp {
       console.log(`Loaded ${chunks.length} chunks from SpacetimeDB`);
       
       for (const chunk of chunks) {
-        this.chunkData.set(chunk.chunk_id, new Uint8Array(chunk.state));
+        this.chunkData.set(chunk.chunkId, new Uint8Array(chunk.state));
       }
       
       this.render();

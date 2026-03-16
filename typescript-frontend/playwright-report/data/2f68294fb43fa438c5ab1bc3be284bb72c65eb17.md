@@ -1,0 +1,45 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e2]:
+  - heading "🎯 SpacetimeDB TypeScript Checkboxes" [level=1] [ref=e3]
+  - generic [ref=e4]:
+    - button "Connect to SpacetimeDB" [ref=e5] [cursor=pointer]
+    - button "Run Test" [disabled] [ref=e6]
+    - button "Clear All" [disabled] [ref=e7]
+    - generic [ref=e8]: Disconnected
+  - generic [ref=e12]:
+    - paragraph [ref=e13]: 🎯 Use arrow keys to navigate • 10,000 checkboxes (100×100 grid)
+    - paragraph [ref=e14]: "📍 Position: 0, 0"
+  - generic [ref=e15]:
+    - generic [ref=e16]:
+      - heading "Connection Info" [level=3] [ref=e17]
+      - paragraph [ref=e18]:
+        - strong [ref=e19]: "Server:"
+        - text: https://maincloud.spacetimedb.com
+      - paragraph [ref=e20]:
+        - strong [ref=e21]: "Database:"
+        - text: c200d12d98ef0c856a8ba926a0f711a75ef243fe097a24f6c26836f0ff2215a0
+      - paragraph [ref=e22]:
+        - strong [ref=e23]: "SDK:"
+        - text: SpacetimeDB TypeScript 2.0.4
+    - generic [ref=e24]:
+      - heading "Checkbox Stats" [level=3] [ref=e25]
+      - paragraph [ref=e26]:
+        - strong [ref=e27]: "Total:"
+        - text: "10000"
+      - paragraph [ref=e28]:
+        - strong [ref=e29]: "Checked:"
+        - text: "0"
+      - paragraph [ref=e30]:
+        - strong [ref=e31]: "Grid Size:"
+        - text: 100×100 (navigable)
+    - generic [ref=e32]:
+      - heading "Real-time Features" [level=3] [ref=e33]
+      - paragraph [ref=e34]: ✅ Live updates via subscriptions
+      - paragraph [ref=e35]: ✅ Multi-user collaboration
+      - paragraph [ref=e36]: ✅ Persistent checkbox state
+  - generic [ref=e37]:
+    - heading "Activity Log" [level=3] [ref=e38]
+    - generic [ref=e39]: Loading TypeScript modules...\n[7:07:04 PM] 🚀 Initializing SpacetimeDB TypeScript application... [7:07:04 PM] ✅ Application initialized successfully [7:07:04 PM] 👆 Click "Connect to SpacetimeDB" to start
+```
