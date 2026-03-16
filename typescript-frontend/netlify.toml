@@ -1,6 +1,6 @@
 [build]
   base = "typescript-frontend/"
-  command = "npm ci && npm run generate && npm run build"
+  command = "npm ci && npm run build"
   publish = "dist/"
 
 [build.environment]

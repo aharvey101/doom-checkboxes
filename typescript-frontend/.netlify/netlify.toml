@@ -1,0 +1,51 @@
+headersOrigin = "config"
+redirectsOrigin = "config"
+plugins = []
+
+[functions]
+
+[functions."*"]
+
+[build]
+publish = "/Users/alexander/development/checkboxes-clean/typescript-frontend/dist"
+publishOrigin = "config"
+commandOrigin = "config"
+base = "/Users/alexander/development/checkboxes-clean/typescript-frontend"
+command = "npm ci && npm run build"
+
+[build.environment]
+NODE_VERSION = "18"
+VITE_SPACETIMEDB_URL = "https://your-spacetimedb-backend.clockworklabs.io"
+
+[build.processing]
+
+[build.processing.css]
+
+[build.processing.html]
+
+[build.processing.images]
+
+[build.processing.js]
+
+[build.services]
+
+[[headers]]
+for = "/*"
+
+[headers.values]
+Content-Security-Policy = "default-src 'self'; connect-src 'self' wss: ws:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+X-Frame-Options = "DENY"
+X-Content-Type-Options = "nosniff"
+X-XSS-Protection = "1; mode=block"
+
+[[redirects]]
+from = "/*"
+to = "/index.html"
+status = 200.0
+force = false
+
+[redirects.query]
+
+[redirects.conditions]
+
+[redirects.headers]

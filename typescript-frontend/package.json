@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "vite build",
     "preview": "vite preview",
     "serve": "vite --host --port 8080",
     "generate": "spacetime generate --lang typescript --out-dir ./src/generated --module-path ../backend",

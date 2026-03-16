@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>100×100 Collaborative Checkbox Grid - Demo</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    
+    .header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    
+    .status {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      padding: 10px 15px;
+      border-radius: 5px;
+      color: white;
+      font-weight: bold;
+      z-index: 1000;
+    }
+    
+    .status.info {
+      background: #2196F3;
+    }
+    
+    .status.error {
+      background: #f44336;
+    }
+    
+    .grid-container {
+      position: relative;
+      width: 800px;
+      height: 600px;
+      border: 2px solid #333;
+      overflow: hidden;
+      margin: 20px auto;
+      border-radius: 8px;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+      background: white;
+    }
+    
+    .grid {
+      position: absolute;
+      top: 0;
+      left: 0;
+      transition: transform 0.1s ease-out;
+    }
+    
+    .checkbox-cell {
+      position: absolute;
+      width: 32px;
+      height: 32px;
+      border: 1px solid #ccc;
+      text-align: center;
+      line-height: 30px;
+      cursor: pointer;
+      user-select: none;
+      background: white;
+      box-sizing: border-box;
+    }
+    
+    .checkbox-cell:hover {
+      background: #e0e0e0;
+    }
+    
+    .checkbox-cell.checked {
+      background: #4CAF50;
+      color: white;
+    }
+    
+    .checkbox-cell.current {
+      border: 3px solid #2196F3;
+      border-radius: 3px;
+    }
+    
+    .controls {
+      text-align: center;
+      margin: 20px;
+      padding: 15px;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .stats {
+      margin-top: 20px;
+      text-align: center;
+      color: #666;
+    }
+    
+    .loading {
+      text-align: center;
+      padding: 50px;
+      color: #666;
+      font-size: 18px;
+    }
+    
+    .demo-banner {
+      background: #fff3cd;
+      color: #856404;
+      padding: 10px 15px;
+      border-radius: 5px;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="demo-banner">
+    <strong>Demo Mode:</strong> This is a standalone demo without SpacetimeDB synchronization. 
+    Changes are local only and not shared between users.
+  </div>
+
+  <div class="header">
+    <h1>100×100 Collaborative Checkbox Grid</h1>
+    <p>Use arrow keys to navigate • Click to toggle checkboxes • Total: 10,000 checkboxes</p>
+  </div>
+
+  <div class="controls">
+    <p><strong>Navigation:</strong> Arrow keys to move the blue cursor • <strong>Toggle:</strong> Click or Space • <strong>Viewport:</strong> Auto-follows cursor</p>
+    <div class="stats">
+      <span id="position-info">Position: (0, 0)</span> • 
+      <span id="checked-count">Checked: 0</span> • 
+      <span id="viewport-info">Viewport: 0-24 × 0-18</span>
+    </div>
+  </div>
+
+  <div id="grid-container" class="grid-container">
+    <div class="loading">Loading 10,000 checkbox grid...</div>
+  </div>
+
+  <script>
+    class CheckboxGrid {
+      constructor() {
+        this.gridSize = 100;
+        this.cellSize = 32;
+        this.viewportWidth = 800;
+        this.viewportHeight = 600;
+        this.viewportCols = Math.floor(this.viewportWidth / this.cellSize);
+        this.viewportRows = Math.floor(this.viewportHeight / this.cellSize);
+        
+        this.currentX = 0;
+        this.currentY = 0;
+        this.viewportX = 0;
+        this.viewportY = 0;
+        
+        this.checkboxStates = new Map();
+        this.container = document.getElementById('grid-container');
+        this.gridElement = null;
+        this.cells = new Map();
+        
+        this.init();
+      }
+      
+      init() {
+        this.showStatus('Initializing 100×100 checkbox grid...', 'info');
+        this.createGrid();
+        this.setupEventListeners();
+        this.updateCurrentPosition();
+        this.updateStats();
+        this.showStatus('Grid ready! Use arrow keys to navigate.', 'info');
+        setTimeout(() => this.hideStatus(), 3000);
+      }
+      
+      createGrid() {
+        this.container.innerHTML = '';
+        this.gridElement = document.createElement('div');
+        this.gridElement.className = 'grid';
+        this.gridElement.style.width = (this.gridSize * this.cellSize) + 'px';
+        this.gridElement.style.height = (this.gridSize * this.cellSize) + 'px';
+        
+        // Create visible cells only (viewport + buffer)
+        this.renderVisibleCells();
+        
+        this.container.appendChild(this.gridElement);
+        this.updateViewport();
+      }
+      
+      renderVisibleCells() {
+        // Clear existing cells
+        this.gridElement.innerHTML = '';
+        this.cells.clear();
+        
+        // Calculate visible area with buffer
+        const buffer = 5;
+        const startCol = Math.max(0, Math.floor(this.viewportX / this.cellSize) - buffer);
+        const endCol = Math.min(this.gridSize - 1, Math.floor((this.viewportX + this.viewportWidth) / this.cellSize) + buffer);
+        const startRow = Math.max(0, Math.floor(this.viewportY / this.cellSize) - buffer);
+        const endRow = Math.min(this.gridSize - 1, Math.floor((this.viewportY + this.viewportHeight) / this.cellSize) + buffer);
+        
+        // Create cells in visible area
+        for (let row = startRow; row <= endRow; row++) {
+          for (let col = startCol; col <= endCol; col++) {
+            this.createCell(row, col);
+          }
+        }
+      }
+      
+      createCell(row, col) {
+        const cell = document.createElement('div');
+        cell.className = 'checkbox-cell';
+        cell.style.left = (col * this.cellSize) + 'px';
+        cell.style.top = (row * this.cellSize) + 'px';
+        cell.addEventListener('click', () => this.toggleCheckbox(row, col));
+        
+        this.updateCellDisplay(cell, row, col);
+        this.gridElement.appendChild(cell);
+        this.cells.set(\`\${row},\${col}\`, cell);
+        
+        return cell;
+      }
+      
+      toggleCheckbox(row, col) {
+        const key = \`\${row},\${col}\`;
+        const isChecked = this.checkboxStates.get(key) || false;
+        this.checkboxStates.set(key, !isChecked);
+        
+        // Update display
+        const cell = this.cells.get(key);
+        if (cell) {
+          this.updateCellDisplay(cell, row, col);
+        }
+        
+        this.updateStats();
+        console.log(\`Checkbox at (\${row}, \${col}) toggled to \${!isChecked} (demo mode)\`);
+      }
+      
+      updateCellDisplay(cell, row, col) {
+        const key = \`\${row},\${col}\`;
+        const isChecked = this.checkboxStates.get(key) || false;
+        const isCurrent = row === this.currentY && col === this.currentX;
+        
+        cell.className = 'checkbox-cell';
+        if (isChecked) {
+          cell.classList.add('checked');
+          cell.textContent = '✓';
+        } else {
+          cell.textContent = '';
+        }
+        
+        if (isCurrent) {
+          cell.classList.add('current');
+        }
+      }
+      
+      setupEventListeners() {
+        document.addEventListener('keydown', (e) => {
+          let moved = false;
+          
+          switch (e.key) {
+            case 'ArrowUp':
+              if (this.currentY > 0) {
+                this.currentY--;
+                moved = true;
+              }
+              break;
+            case 'ArrowDown':
+              if (this.currentY < this.gridSize - 1) {
+                this.currentY++;
+                moved = true;
+              }
+              break;
+            case 'ArrowLeft':
+              if (this.currentX > 0) {
+                this.currentX--;
+                moved = true;
+              }
+              break;
+            case 'ArrowRight':
+              if (this.currentX < this.gridSize - 1) {
+                this.currentX++;
+                moved = true;
+              }
+              break;
+            case ' ':
+              e.preventDefault();
+              this.toggleCheckbox(this.currentY, this.currentX);
+              return;
+          }
+          
+          if (moved) {
+            e.preventDefault();
+            this.updateViewport();
+            this.updateCurrentPosition();
+            this.updateStats();
+          }
+        });
+      }
+      
+      updateCurrentPosition() {
+        // Update all visible cells to show/hide current indicator
+        this.cells.forEach((cell, key) => {
+          const [row, col] = key.split(',').map(Number);
+          this.updateCellDisplay(cell, row, col);
+        });
+      }
+      
+      updateViewport() {
+        // Keep current position near viewport center
+        const targetViewportX = Math.max(0, Math.min(
+          this.currentX * this.cellSize - this.viewportWidth / 2,
+          this.gridSize * this.cellSize - this.viewportWidth
+        ));
+        
+        const targetViewportY = Math.max(0, Math.min(
+          this.currentY * this.cellSize - this.viewportHeight / 2,
+          this.gridSize * this.cellSize - this.viewportHeight
+        ));
+        
+        // Only re-render if viewport moved significantly
+        const deltaX = Math.abs(targetViewportX - this.viewportX);
+        const deltaY = Math.abs(targetViewportY - this.viewportY);
+        
+        this.viewportX = targetViewportX;
+        this.viewportY = targetViewportY;
+        
+        if (deltaX > this.cellSize || deltaY > this.cellSize) {
+          this.renderVisibleCells();
+        }
+        
+        this.gridElement.style.transform = \`translate(\${-this.viewportX}px, \${-this.viewportY}px)\`;
+      }
+      
+      updateStats() {
+        const checkedCount = this.checkboxStates.size;
+        const viewportStartCol = Math.floor(this.viewportX / this.cellSize);
+        const viewportEndCol = Math.min(this.gridSize - 1, viewportStartCol + this.viewportCols - 1);
+        const viewportStartRow = Math.floor(this.viewportY / this.cellSize);
+        const viewportEndRow = Math.min(this.gridSize - 1, viewportStartRow + this.viewportRows - 1);
+        
+        document.getElementById('position-info').textContent = \`Position: (\${this.currentX}, \${this.currentY})\`;
+        document.getElementById('checked-count').textContent = \`Checked: \${checkedCount}\`;
+        document.getElementById('viewport-info').textContent = \`Viewport: \${viewportStartCol}-\${viewportEndCol} × \${viewportStartRow}-\${viewportEndRow}\`;
+      }
+      
+      showStatus(message, type = 'info') {
+        let status = document.querySelector('.status');
+        if (!status) {
+          status = document.createElement('div');
+          status.className = 'status';
+          document.body.appendChild(status);
+        }
+        
+        status.textContent = message;
+        status.className = \`status \${type}\`;
+        status.style.display = 'block';
+      }
+      
+      hideStatus() {
+        const status = document.querySelector('.status');
+        if (status) {
+          status.style.display = 'none';
+        }
+      }
+    }
+    
+    // Initialize when page loads
+    document.addEventListener('DOMContentLoaded', () => {
+      // Check for Netlify environment variables
+      const serverUrl = window.NETLIFY ? 'netlify' : 'local';
+      console.log('Environment:', serverUrl);
+      console.log('SpacetimeDB URL:', '${VITE_SPACETIMEDB_URL}' || 'not set');
+      
+      new CheckboxGrid();
+    });
+  </script>
+</body>
+</html>
