@@ -7,8 +7,8 @@ import {
 } from './index';
 
 // Default database connection configuration (can be overridden in constructor)
-const DEFAULT_DATABASE_ADDRESS = 'c200d12d98ef0c856a8ba926a0f711a75ef243fe097a24f6c26836f0ff2215a0';
-const DEFAULT_SERVER_URL = 'https://maincloud.spacetimedb.com';
+const DEFAULT_DATABASE_ADDRESS = 'c200f55a1042dfa3abafc82273cc1d9daa4268eb87ec63ed798f504971ff6754';
+const DEFAULT_SERVER_URL = 'http://localhost:3001';
 
 // Define the checkbox chunk type from our generated table
 export type CheckboxChunk = {
@@ -87,46 +87,84 @@ export class CheckboxDatabase {
     if (!this.connection) return;
     
     try {
-      console.log('📡 Setting up subscriptions for real-time updates...');
+      console.log('📡 [DEBUG-SUB] Setting up subscriptions for real-time updates...');
       
       // Subscribe to the checkbox_chunk table using v2.0 API
+      console.log('📡 [DEBUG-SUB] Creating subscription builder...');
       this.subscriptionHandle = this.connection.subscriptionBuilder()
         .subscribe(tables.checkbox_chunk);
+      console.log('📡 [DEBUG-SUB] Subscription handle created:', this.subscriptionHandle ? 'success' : 'failed');
         
       // Set up insert and update callbacks
+      console.log('📡 [DEBUG-SUB] Setting up onInsert callback...');
       this.connection.db.checkbox_chunk.onInsert((ctx, chunk, reducerEvent) => {
-        console.log('Chunk insert:', chunk.chunkId);
+        console.log('🔔 [DEBUG-INSERT] Insert callback triggered!');
+        console.log('🔔 [DEBUG-INSERT] Context:', ctx);
+        console.log('🔔 [DEBUG-INSERT] Chunk:', chunk);
+        console.log('🔔 [DEBUG-INSERT] ReducerEvent:', reducerEvent);
+        console.log('🔔 [DEBUG-INSERT] Chunk insert:', chunk.chunkId);
         const convertedChunk: CheckboxChunk = {
           chunkId: chunk.chunkId,
           state: new Uint8Array(chunk.state),
           version: chunk.version
         };
+        console.log('🔔 [DEBUG-INSERT] Converted chunk:', convertedChunk);
         this.notifyChunkInsert(convertedChunk);
       });
       
+      console.log('📡 [DEBUG-SUB] Setting up onUpdate callback...');
       this.connection.db.checkbox_chunk.onUpdate((ctx, oldChunk, newChunk, reducerEvent) => {
-        console.log('Chunk update:', newChunk.chunkId);
+        console.log('🔔 [DEBUG-UPDATE] Update callback triggered!');
+        console.log('🔔 [DEBUG-UPDATE] Context:', ctx);
+        console.log('🔔 [DEBUG-UPDATE] OldChunk:', oldChunk);
+        console.log('🔔 [DEBUG-UPDATE] NewChunk:', newChunk);
+        console.log('🔔 [DEBUG-UPDATE] ReducerEvent:', reducerEvent);
+        console.log('🔔 [DEBUG-UPDATE] Chunk update:', newChunk.chunkId);
         const convertedChunk: CheckboxChunk = {
           chunkId: newChunk.chunkId,
           state: new Uint8Array(newChunk.state),
           version: newChunk.version
         };
+        console.log('🔔 [DEBUG-UPDATE] Converted chunk:', convertedChunk);
         this.notifyChunkUpdate(convertedChunk);
       });
         
-      console.log('✅ Real-time subscriptions active');
+      console.log('✅ [DEBUG-SUB] Real-time subscriptions active');
     } catch (error) {
-      console.error('❌ Failed to set up subscriptions:', error);
+      console.error('❌ [DEBUG-SUB] Failed to set up subscriptions:', error);
+      console.error('❌ [DEBUG-SUB] Error details:', error);
       // Continue without subscriptions - we'll still have manual refresh
     }
   }
   
   private notifyChunkInsert(chunk: CheckboxChunk): void {
-    this.insertCallbacks.forEach(cb => cb(chunk));
+    console.log(`🔔 [DEBUG-NOTIFY] notifyChunkInsert called with chunk:`, chunk);
+    console.log(`🔔 [DEBUG-NOTIFY] Number of insert callbacks registered: ${this.insertCallbacks.length}`);
+    
+    this.insertCallbacks.forEach((cb, index) => {
+      console.log(`🔔 [DEBUG-NOTIFY] Calling insert callback #${index}...`);
+      try {
+        cb(chunk);
+        console.log(`✅ [DEBUG-NOTIFY] Insert callback #${index} completed successfully`);
+      } catch (error) {
+        console.error(`❌ [DEBUG-NOTIFY] Insert callback #${index} failed:`, error);
+      }
+    });
   }
   
   private notifyChunkUpdate(chunk: CheckboxChunk): void {
-    this.updateCallbacks.forEach(cb => cb(chunk));
+    console.log(`🔔 [DEBUG-NOTIFY] notifyChunkUpdate called with chunk:`, chunk);
+    console.log(`🔔 [DEBUG-NOTIFY] Number of update callbacks registered: ${this.updateCallbacks.length}`);
+    
+    this.updateCallbacks.forEach((cb, index) => {
+      console.log(`🔔 [DEBUG-NOTIFY] Calling update callback #${index}...`);
+      try {
+        cb(chunk);
+        console.log(`✅ [DEBUG-NOTIFY] Update callback #${index} completed successfully`);
+      } catch (error) {
+        console.error(`❌ [DEBUG-NOTIFY] Update callback #${index} failed:`, error);
+      }
+    });
   }
   
   // Check connection status
@@ -136,10 +174,12 @@ export class CheckboxDatabase {
   
   // Subscribe to table updates
   onCheckboxChunkInsert(callback: (chunk: CheckboxChunk) => void): void {
+    console.log(`🔔 [DEBUG-REG] Registering insert callback. Total callbacks: ${this.insertCallbacks.length + 1}`);
     this.insertCallbacks.push(callback);
   }
   
   onCheckboxChunkUpdate(callback: (chunk: CheckboxChunk) => void): void {
+    console.log(`🔔 [DEBUG-REG] Registering update callback. Total callbacks: ${this.updateCallbacks.length + 1}`);
     this.updateCallbacks.push(callback);
   }
   
@@ -150,11 +190,23 @@ export class CheckboxDatabase {
     }
     
     try {
-      // Call the update_checkbox reducer using v2.0 API
-      await this.connection.reducers.updateCheckbox(chunk_id, bit_offset, checked);
-      console.log(`✅ Updated checkbox ${chunk_id}:${bit_offset} = ${checked}`);
+      console.log(`🔄 [DEBUG-1] About to call reducer updateCheckbox(${chunk_id}, ${bit_offset}, ${checked})`);
+      console.log(`🔄 [DEBUG-1] Connection status: connected=${this.connected}, connection=${this.connection ? 'exists' : 'null'}`);
+      
+      // Call the update_checkbox reducer using v2.0 API with correct parameter names (camelCase)
+      const result = await this.connection.reducers.updateCheckbox({
+        chunkId: chunk_id,
+        bitOffset: bit_offset, 
+        checked: checked
+      });
+      
+      console.log(`✅ [DEBUG-2] Reducer call completed successfully`);
+      console.log(`✅ [DEBUG-2] Result:`, result);
+      console.log(`✅ [DEBUG-2] Updated checkbox ${chunk_id}:${bit_offset} = ${checked}`);
     } catch (error) {
-      console.error('❌ Failed to update checkbox:', error);
+      console.error('❌ [DEBUG-ERROR] Failed to update checkbox:', error);
+      console.error('❌ [DEBUG-ERROR] Error type:', typeof error);
+      console.error('❌ [DEBUG-ERROR] Error details:', error);
       throw error;
     }
   }
@@ -166,7 +218,7 @@ export class CheckboxDatabase {
     
     try {
       // Call the add_chunk reducer using v2.0 API
-      await this.connection.reducers.addChunk(chunk_id);
+      await this.connection.reducers.addChunk({ chunkId: chunk_id });
       console.log(`✅ Added chunk ${chunk_id}`);
     } catch (error) {
       console.error('❌ Failed to add chunk:', error);
