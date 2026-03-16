@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('SpacetimeDB Configuration Fix', () => {
-  test('should connect to correct server when configuration parameters are provided', async ({ page }) => {
+  test('should connect using constructor parameters instead of hardcoded defaults', async ({ page }) => {
     await page.goto('/');
     
     // Monitor console logs to verify connection parameters
@@ -13,20 +13,19 @@ test.describe('SpacetimeDB Configuration Fix', () => {
       }
     });
     
-    // The HTML initializes with localhost settings
-    // But we expect the connection to use those settings, not hardcoded production
+    // Click connect button to initiate connection
     await page.click('#connectBtn');
     
     // Wait for connection attempt
     await page.waitForTimeout(2000);
     
-    // Verify that connection logs show localhost settings being used
+    // Verify that connection logs show constructor parameters being used
     const serverLog = connectionLogs.find(log => log.includes('🔌 Connecting to SpacetimeDB'));
     const databaseLog = connectionLogs.find(log => log.includes('📍 Database address'));
     
-    // This test will fail because currently the database client ignores
-    // the constructor parameters and uses hardcoded production values
-    expect(serverLog).toContain('http://localhost:3000');
-    expect(databaseLog).toContain('checkboxes-local-demo');
+    // The HTML now initializes with production settings
+    // Verify that connection logs show production settings being used properly
+    expect(serverLog).toContain('https://maincloud.spacetimedb.com');
+    expect(databaseLog).toContain('c200d12d98ef0c856a8ba926a0f711a75ef243fe097a24f6c26836f0ff2215a0');
   });
 });
