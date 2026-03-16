@@ -1,107 +1,123 @@
-# Scalable Checkboxes with SpacetimeDB
+# 100×100 Collaborative Checkbox Grid
 
-A real-time collaborative checkbox grid supporting 1 million checkboxes (scalable to 1 billion) using SpacetimeDB 0.1 backend and vanilla WASM frontend.
+A real-time collaborative checkbox application with persistence using SpacetimeDB v2.0 and deployed on Netlify.
 
-## Architecture
+## 🚀 Live Demo
 
-- **Backend**: SpacetimeDB 0.1 library with `CheckboxChunk` table storing 1M checkbox states per chunk (125KB compressed bit array)
-- **Frontend**: Vanilla WASM using web-sys, renders 10,000 checkboxes with full 1M state tracking
-- **Communication**: WebSocket JSON messages for real-time sync
+**Production Site**: https://checkbox-grid-100x100.netlify.app
 
-## Running the Project
+## ✨ Features
+
+- **100×100 Checkbox Grid** - 10,000 interactive checkboxes with smooth scrolling navigation
+- **Real-time Collaboration** - Multiple users can edit simultaneously with instant synchronization
+- **Persistence** - All checkbox states are automatically saved and restored across sessions
+- **Arrow Key Navigation** - Navigate the grid efficiently with keyboard controls
+- **SpacetimeDB Integration** - Powered by SpacetimeDB v2.0 for real-time database synchronization
+
+## 🏗️ Architecture
+
+### Frontend (TypeScript + Vite)
+- **Location**: `typescript-frontend/`
+- **Technology**: TypeScript, HTML5 Canvas, Vite build system
+- **Features**: Virtual viewport rendering, real-time SpacetimeDB client, responsive UI
+
+### Backend (Rust + SpacetimeDB)
+- **Location**: `backend/`
+- **Technology**: SpacetimeDB v2.0 module in Rust
+- **Features**: Efficient chunk-based storage, real-time subscriptions, automatic persistence
+
+### Key Components
+- **CheckboxChunk Table**: Stores 1M checkbox states per chunk using bit-packed arrays
+- **Real-time Sync**: WebSocket connections with SpacetimeDB cloud infrastructure
+- **Canvas Renderer**: Hardware-accelerated rendering for smooth 100×100 grid interaction
+
+## 🚀 Quick Start
 
 ### Prerequisites
-- Rust 1.70+ (nightly for WASM)
-- wasm-pack (for WASM compilation)
-- Python 3 (for HTTP server)
+- Node.js 18+
+- Rust 1.94+ (for backend development)
+- SpacetimeDB CLI (for backend development)
 
-### Build
+### Development Setup
 
-```bash
-cd /Users/alexander/development/checkboxes/.worktrees/checkboxes-impl
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/aharvey101/collaborative-checkboxes.git
+   cd collaborative-checkboxes
+   ```
 
-# Build backend server
-cd backend
-cargo build --bin server --release
+2. **Frontend Development** 
+   ```bash
+   cd typescript-frontend
+   npm install
+   npm run dev
+   ```
+   Opens development server at http://localhost:5173
 
-# Build frontend WASM
-cd ../frontend
-wasm-pack build --target web
+3. **Backend Development** (optional, uses production DB by default)
+   ```bash
+   cd backend
+   spacetime build
+   spacetime start
+   ```
+
+### Production Deployment
+
+The application automatically deploys to Netlify on every push to main branch:
+- **Build Command**: `npm ci && npm run build`
+- **Build Directory**: `typescript-frontend/dist/`
+- **Live URL**: https://checkbox-grid-100x100.netlify.app
+
+## 🎯 How It Works
+
+1. **User opens application**: Connects to SpacetimeDB production database
+2. **Real-time subscriptions**: Establishes WebSocket connection for live updates  
+3. **Click checkbox**: Updates local state + sends change to SpacetimeDB
+4. **Database sync**: SpacetimeDB persists change and broadcasts to all connected users
+5. **Cross-user updates**: Other users see changes instantly in their browser
+
+## 🧪 Verification
+
+The application includes comprehensive testing for core functionality:
+
+- **Connection Test**: Verifies SpacetimeDB v2.0 API connectivity
+- **Persistence Test**: Confirms checkbox states survive page reloads
+- **Collaboration Test**: Validates real-time synchronization between browser tabs
+- **Integration Test**: End-to-end functionality verification
+
+## 📦 Technical Details
+
+### SpacetimeDB Schema
+```rust
+#[table(accessor = checkbox_chunk, public)]
+pub struct CheckboxChunk {
+    #[primary_key]
+    chunk_id: u32,
+    state: Vec<u8>,    // Bit-packed checkbox states (125KB per 1M checkboxes)
+    version: u64,      // For optimistic concurrency control
+}
 ```
 
-### Run
+### Build Configuration
+- **Framework**: Vite with TypeScript
+- **Deployment**: Netlify with automatic GitHub integration
+- **Database**: SpacetimeDB cloud production instance
+- **CSP Policy**: Configured for WebAssembly and WebSocket support
 
-In one terminal, start the backend WebSocket server:
-```bash
-cd backend
-cargo run --bin server --release
-# Output: WebSocket server listening on ws://127.0.0.1:8080/subscribe
-```
+## 🤝 Contributing
 
-In another terminal, start the HTTP server:
-```bash
-cd frontend
-python3 ../serve.py
-# Output: Serving frontend on http://localhost:3000
-```
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-Then open `http://localhost:3000` in your browser.
+## 📄 License
 
-## How It Works
+MIT License - see LICENSE file for details
 
-1. **Frontend loads**: Vanilla WASM initializes with 1M bit array in memory
-2. **User clicks checkbox**: JS toggles bit locally + sends `UpdateCheckbox` message to server
-3. **Server receives**: Updates `CheckboxChunk` table in memory, sends confirmation back
-4. **Frontend syncs**: Updates local state and re-renders the 10K visible checkboxes
+## 🔗 Links
 
-## Project Structure
-
-```
-checkboxes-impl/
-├── backend/
-│   ├── src/
-│   │   ├── lib.rs         # CheckboxChunk table + helper functions
-│   │   └── main.rs        # WebSocket server
-│   └── Cargo.toml
-├── frontend/
-│   ├── src/
-│   │   └── lib.rs         # WASM entry point + UI logic
-│   ├── index.html         # HTML harness
-│   ├── pkg/               # Generated WASM bindings (after build)
-│   └── Cargo.toml
-├── serve.py               # HTTP server for testing
-└── Cargo.toml             # Workspace config
-```
-
-## Testing
-
-### Unit Tests
-```bash
-cd backend
-cargo test
-# All 5 tests pass: set_bit, get_bit, boundaries, out_of_bounds, multiple_bits
-```
-
-### E2E Testing
-1. Start backend server
-2. Start HTTP server
-3. Open http://localhost:3000
-4. Click checkboxes and observe:
-   - Local state updates instantly
-   - WebSocket messages sent to server
-   - Server logs checkbox updates
-
-## Known Limitations
-
-- SpacetimeDB integration is library-only (no CLI setup required)
-- Server stores state in memory (not persisted)
-- No multi-user synchronization yet (would need broadcast on updates)
-- Rendering limited to 10,000 checkboxes (could optimize with virtual scrolling)
-
-## Next Steps
-
-- [ ] Add multi-user synchronization via broadcast
-- [ ] Implement virtual scrolling for rendering optimization
-- [ ] Add persistence layer (database)
-- [ ] Load test with 1000+ concurrent users
-- [ ] Create a real SpacetimeDB deployment
+- [SpacetimeDB Documentation](https://spacetimedb.com/docs)
+- [Live Application](https://checkbox-grid-100x100.netlify.app)
+- [GitHub Repository](https://github.com/aharvey101/collaborative-checkboxes)
