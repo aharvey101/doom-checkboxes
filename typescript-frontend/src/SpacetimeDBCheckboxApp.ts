@@ -206,14 +206,32 @@ export class SpacetimeDBCheckboxApp {
   // Subscribe to SpacetimeDB updates
   private subscribeToUpdates(): void {
     this.checkboxDatabase.onCheckboxChunkInsert((chunk: CheckboxChunk) => {
-      console.log('Chunk inserted:', chunk.chunkId);
+      console.log(`📥 [DB-IN] Chunk INSERT - ChunkId: ${chunk.chunkId}, StateSize: ${chunk.state.length}, Version: ${chunk.version}`);
+      console.log(`🔍 [DB-IN] First 10 bytes: ${Array.from(chunk.state.slice(0, 10)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+      
       this.chunkData.set(chunk.chunkId, new Uint8Array(chunk.state));
+      
+      console.log(`🎨 [RENDER] Triggering render from chunk INSERT`);
       this.render();
     });
     
     this.checkboxDatabase.onCheckboxChunkUpdate((newRow: CheckboxChunk) => {
-      console.log('Chunk updated:', newRow.chunkId);
+      console.log(`📥 [DB-IN] Chunk UPDATE - ChunkId: ${newRow.chunkId}, StateSize: ${newRow.state.length}, Version: ${newRow.version}`);
+      console.log(`🔍 [DB-IN] First 10 bytes: ${Array.from(newRow.state.slice(0, 10)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+      
+      // Get old chunk for comparison
+      const oldChunk = this.chunkData.get(newRow.chunkId);
+      if (oldChunk) {
+        const oldFirst10 = Array.from(oldChunk.slice(0, 10)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+        const newFirst10 = Array.from(newRow.state.slice(0, 10)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+        console.log(`🔄 [DB-IN] OLD: ${oldFirst10}`);
+        console.log(`🔄 [DB-IN] NEW: ${newFirst10}`);
+        console.log(`🔄 [DB-IN] CHANGED: ${oldFirst10 !== newFirst10 ? 'YES' : 'NO'}`);
+      }
+      
       this.chunkData.set(newRow.chunkId, new Uint8Array(newRow.state));
+      
+      console.log(`🎨 [RENDER] Triggering render from chunk UPDATE`);
       this.render();
     });
   }
@@ -245,22 +263,39 @@ export class SpacetimeDBCheckboxApp {
     const currentState = this.getCheckboxState(row, col);
     const newState = !currentState;
     
+    // 🔍 DEBUG: Log state change intention
+    console.log(`🎯 [STATE] Toggle (${row}, ${col}): ${currentState} → ${newState}`);
+    console.log(`📍 [CALC] GlobalIndex: ${globalIndex}, ChunkId: ${chunkId}, BitOffset: ${bitOffset}`);
+    
     try {
+      // 🔍 DEBUG: Log before database call
+      console.log(`📤 [DB-OUT] Calling updateCheckbox(${chunkId}, ${bitOffset}, ${newState})`);
+      
       // Update SpacetimeDB first
       await this.checkboxDatabase.updateCheckbox(chunkId, bitOffset, newState);
+      
+      // 🔍 DEBUG: Log database success
+      console.log(`✅ [DB-OK] updateCheckbox successful`);
       
       // Update local cache immediately for responsiveness
       let chunk = this.chunkData.get(chunkId);
       if (!chunk) {
+        console.log(`📦 [CACHE] Creating new chunk ${chunkId}`);
         chunk = new Uint8Array(125000); // 125KB for 1M bits
         this.chunkData.set(chunkId, chunk);
         
         // Create chunk in database if it doesn't exist
+        console.log(`📤 [DB-OUT] Calling addChunk(${chunkId})`);
         await this.checkboxDatabase.addChunk(chunkId);
+        console.log(`✅ [DB-OK] addChunk successful`);
       }
       
+      // 🔍 DEBUG: Log bit manipulation
       const byteIndex = Math.floor(bitOffset / 8);
       const bitIndex = bitOffset % 8;
+      const oldByte = chunk[byteIndex];
+      
+      console.log(`🔧 [BIT] ByteIndex: ${byteIndex}, BitIndex: ${bitIndex}, OldByte: ${oldByte.toString(2).padStart(8, '0')}`);
       
       if (byteIndex < chunk.length) {
         if (newState) {
@@ -268,15 +303,23 @@ export class SpacetimeDBCheckboxApp {
         } else {
           chunk[byteIndex] &= ~(1 << bitIndex);
         }
+        
+        console.log(`🔧 [BIT] NewByte: ${chunk[byteIndex].toString(2).padStart(8, '0')}`);
       }
       
+      // 🔍 DEBUG: Log render call
+      console.log(`🎨 [RENDER] Calling render() after state update`);
       this.render();
       this.updateStats();
+      
+      // 🔍 DEBUG: Verify final state
+      const finalState = this.getCheckboxState(row, col);
+      console.log(`🔍 [VERIFY] Final state check: ${finalState} (expected: ${newState})`);
       
       console.log(`Toggled checkbox (${row}, ${col}) to ${newState}`);
       
     } catch (error) {
-      console.error('Failed to toggle checkbox:', error);
+      console.error('💥 [ERROR] Failed to toggle checkbox:', error);
       this.showStatus(`Failed to update: ${error.message}`, 'error');
       setTimeout(() => this.hideStatus(), 3000);
     }
@@ -288,15 +331,35 @@ export class SpacetimeDBCheckboxApp {
     const chunkId = Math.floor(globalIndex / 1000000);
     const bitOffset = globalIndex % 1000000;
     
+    // 🔍 DEBUG: Add detailed logging for critical state reads
+    const isVerificationCall = new Error().stack?.includes('VERIFY');
+    if (isVerificationCall) {
+      console.log(`📖 [READ] Reading (${row}, ${col}): GlobalIndex: ${globalIndex}, ChunkId: ${chunkId}, BitOffset: ${bitOffset}`);
+    }
+    
     const chunk = this.chunkData.get(chunkId);
-    if (!chunk) return false;
+    if (!chunk) {
+      if (isVerificationCall) console.log(`📖 [READ] No chunk found for ChunkId: ${chunkId}`);
+      return false;
+    }
     
     const byteIndex = Math.floor(bitOffset / 8);
     const bitIndex = bitOffset % 8;
     
-    if (byteIndex >= chunk.length) return false;
+    if (byteIndex >= chunk.length) {
+      if (isVerificationCall) console.log(`📖 [read] ByteIndex ${byteIndex} >= chunk.length ${chunk.length}`);
+      return false;
+    }
     
-    return (chunk[byteIndex] & (1 << bitIndex)) !== 0;
+    const byteValue = chunk[byteIndex];
+    const result = (byteValue & (1 << bitIndex)) !== 0;
+    
+    if (isVerificationCall) {
+      console.log(`📖 [read] ByteIndex: ${byteIndex}, BitIndex: ${bitIndex}`);
+      console.log(`📖 [read] Byte: ${byteValue.toString(2).padStart(8, '0')}, Result: ${result}`);
+    }
+    
+    return result;
   }
   
   // Update viewport to follow current position
@@ -324,16 +387,23 @@ export class SpacetimeDBCheckboxApp {
     
     const ctx = this.ctx;
     
+    // 🔍 DEBUG: Count checked checkboxes and log render stats
+    let checkedCount = 0;
+    let totalVisible = 0;
+    
     // Clear canvas
     ctx.clearRect(0, 0, this.gridSize * this.cellSize, this.gridSize * this.cellSize);
     
     // Draw grid and checkboxes
     for (let row = 0; row < this.gridSize; row++) {
       for (let col = 0; col < this.gridSize; col++) {
+        totalVisible++;
         const x = col * this.cellSize;
         const y = row * this.cellSize;
         const isChecked = this.getCheckboxState(row, col);
         const isCurrent = row === this.currentY && col === this.currentX;
+        
+        if (isChecked) checkedCount++;
         
         // Draw cell background
         ctx.fillStyle = isChecked ? '#4CAF50' : 'white';
@@ -354,6 +424,8 @@ export class SpacetimeDBCheckboxApp {
         }
       }
     }
+    
+    console.log(`🎨 [RENDER] Complete - Total: ${totalVisible}, Checked: ${checkedCount}, Chunks loaded: ${this.chunkData.size}`);
   }
   
   // Start render loop
