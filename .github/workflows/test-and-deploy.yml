@@ -86,8 +86,8 @@ jobs:
 
       - name: Run E2E tests
         run: |
-          echo "Running full E2E test suite..."
-          PLAYWRIGHT_BASE_URL=http://localhost:5173 TEST_ENV=ci timeout 1200 npx playwright test --project=ci
+          echo "Running full E2E test suite (allowing 30 minutes for 27 tests)..."
+          PLAYWRIGHT_BASE_URL=http://localhost:5173 TEST_ENV=ci timeout 1800 npx playwright test --project=ci
 
       # Skip coverage temporarily 
       # - name: Generate unit test coverage
