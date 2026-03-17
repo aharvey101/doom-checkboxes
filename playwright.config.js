@@ -12,11 +12,11 @@ export default defineConfig({
   ],
   
   // SpacetimeDB and collaborative features need time
-  timeout: 30000,
-  expect: { timeout: 10000 },
+  timeout: 15000, // Reduce timeout to prevent hangs
+  expect: { timeout: 5000 },
   
   // Handle SpacetimeDB startup delays and occasional connection issues
-  retries: process.env.CI ? 2 : 1,
+  retries: process.env.CI ? 1 : 0, // Reduce retries in CI to prevent long hangs
   workers: 1, // Sequential execution for collaborative state management
   
   // Global configuration
@@ -54,10 +54,12 @@ export default defineConfig({
   
   // Auto-start dev server for CI environment
   webServer: process.env.TEST_ENV === 'ci' ? {
-    command: 'cd typescript-frontend && npm run dev',
+    command: 'cd typescript-frontend && npm run dev -- --host 0.0.0.0 --port 5173',
     port: 5173,
     reuseExistingServer: !process.env.CI,
-    timeout: 120000,
+    timeout: 60000, // Reduce timeout to 1 minute
+    stdout: 'pipe',
+    stderr: 'pipe',
   } : undefined,
   
   // Global setup/teardown for SpacetimeDB state management
