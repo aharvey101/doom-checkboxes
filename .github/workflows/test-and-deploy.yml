@@ -82,7 +82,7 @@ jobs:
       - name: Run E2E tests
         run: |
           cd typescript-frontend
-          TEST_ENV=ci npm run test:e2e-playwright
+          PLAYWRIGHT_BASE_URL=http://localhost:5173 TEST_ENV=ci npm run test:e2e-playwright
 
       # Skip coverage temporarily 
       # - name: Generate unit test coverage
