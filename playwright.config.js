@@ -35,7 +35,7 @@ export default defineConfig({
     {
       name: 'ci',
       use: {
-        baseURL: 'http://localhost:8000',
+        baseURL: 'http://localhost:5173',
       },
     },
     {
@@ -54,8 +54,8 @@ export default defineConfig({
   
   // Auto-start dev server for CI environment
   webServer: process.env.TEST_ENV === 'ci' ? {
-    command: 'npm run dev',
-    port: 8000,
+    command: 'cd typescript-frontend && npm run dev',
+    port: 5173,
     reuseExistingServer: !process.env.CI,
     timeout: 120000,
   } : undefined,
