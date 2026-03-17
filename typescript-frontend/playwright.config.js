@@ -1,17 +1,13 @@
 import { defineConfig } from '@playwright/test';
 import path from 'path';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
 
 export default defineConfig({
-  // Run tests in the typescript-frontend directory to avoid conflicts
-  testDir: './tests',
-  testMatch: [
-    // Future Playwright-specific tests
-    '**/playwright/**/*.spec.{ts,js}',
-    '**/e2e/**/*.spec.{ts,js}', 
-    '**/*.playwright.spec.{ts,js}',
-    // Existing tests when converted to Playwright format
-    '**/*.e2e.spec.{ts,js}'
-  ],
+  // Run both root-level integration tests and local E2E tests
+  testDir: '../',
+  testMatch: ['*.spec.js', 'typescript-frontend/tests/**/*.spec.js'],
   
   // SpacetimeDB and collaborative features need time
   timeout: 30000,
@@ -23,7 +19,7 @@ export default defineConfig({
   
   // Global configuration
   use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:5174',
+    baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000',
     trace: 'on-first-retry',
     video: 'retain-on-failure',
     screenshot: 'only-on-failure',
@@ -37,7 +33,7 @@ export default defineConfig({
     {
       name: 'ci',
       use: {
-        baseURL: 'http://localhost:5174',
+        baseURL: 'http://localhost:8000',
       },
     },
     {
@@ -57,14 +53,14 @@ export default defineConfig({
   // Auto-start dev server for CI environment
   webServer: process.env.TEST_ENV === 'ci' ? {
     command: 'npm run dev',
-    port: 5174,
+    port: 8000,
     reuseExistingServer: !process.env.CI,
     timeout: 120000,
   } : undefined,
   
   // Global setup/teardown for SpacetimeDB state management
-  globalSetup: './test-setup.js',
-  globalTeardown: './test-teardown.js',
+  globalSetup: require.resolve('./test-setup.js'),
+  globalTeardown: require.resolve('./test-teardown.js'),
   
   // Reporting
   reporter: [
