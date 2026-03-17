@@ -5,7 +5,7 @@ import path from 'path';
 
 const BACKEND_DIR = path.resolve('../backend');
 const CONFIGS = {
-  production: 'spacetime.json',
+  production: 'spacetime.production.json',
   staging: 'spacetime.staging.json', 
   ci: 'spacetime.ci.json'
 };
