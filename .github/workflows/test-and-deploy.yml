@@ -45,6 +45,11 @@ jobs:
           cd ../scripts  
           npm ci
           
+      - name: Install Playwright browsers
+        run: |
+          cd typescript-frontend
+          npx playwright install --with-deps chromium firefox
+          
       - name: Build backend module
         run: |
           cd backend
@@ -60,20 +65,41 @@ jobs:
       - name: Deploy test module
         run: ./scripts/spacetimedb-local.sh deploy
         
-      - name: Run test suite
+      - name: Run unit tests
         run: |
           cd typescript-frontend
           TEST_ENV=ci npm run test:ci
-          
-      - name: Generate test coverage
+
+      - name: Run E2E tests
         run: |
-          cd typescript-frontend  
+          cd typescript-frontend
+          TEST_ENV=ci npm run test:e2e-playwright
+
+      - name: Generate unit test coverage
+        run: |
+          cd typescript-frontend
           TEST_ENV=ci npm run test:coverage
           
       - name: Upload coverage reports
         uses: codecov/codecov-action@v3
         with:
           file: typescript-frontend/coverage/lcov.info
+
+      - name: Upload E2E test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: playwright-report
+          path: typescript-frontend/playwright-report/
+          retention-days: 30
+
+      - name: Upload E2E test screenshots
+        uses: actions/upload-artifact@v3
+        if: failure()
+        with:
+          name: playwright-screenshots
+          path: typescript-frontend/test-results/
+          retention-days: 30
           
       - name: Cleanup test environment
         if: always()
