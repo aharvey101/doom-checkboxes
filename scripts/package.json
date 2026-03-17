@@ -1,0 +1,8 @@
+{
+  "name": "checkboxes-scripts",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "fs-extra": "^11.1.1"
+  }
+}
