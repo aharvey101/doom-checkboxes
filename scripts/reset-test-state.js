@@ -10,6 +10,13 @@ export async function resetTestState() {
   try {
     const backendDir = path.resolve(path.dirname(import.meta.url.replace('file://', '')), '../backend');
     
+    // Check that SpacetimeDB CLI is available
+    try {
+      execSync('spacetime --version', { stdio: 'ignore', cwd: backendDir });
+    } catch (versionError) {
+      throw new Error('SpacetimeDB CLI is not available. Please ensure SpacetimeDB is installed and accessible.');
+    }
+    
     // Safety check - ensure we're not accidentally clearing production data
     const configPath = path.join(backendDir, 'spacetime.json');
     if (fs.existsSync(configPath)) {
