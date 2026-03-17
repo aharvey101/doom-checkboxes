@@ -91,6 +91,17 @@ class TestDatabaseManager {
       console.log('No SpacetimeDB process to stop');
     }
   }
+
+  async resetTestData() {
+    const { resetTestState } = await import('./reset-test-state.js');
+    const success = await resetTestState();
+    if (success) {
+      console.log('✓ Test data reset completed');
+    } else {
+      console.log('⚠️ Test data reset failed');
+      throw new Error('Failed to reset test data');
+    }
+  }
 }
 
 // CLI interface
@@ -111,7 +122,10 @@ switch (command) {
   case 'stop-local':
     await manager.stopLocalSpacetimeDB();
     break;
+  case 'reset-data':
+    await manager.resetTestData();
+    break;
   default:
-    console.log('Usage: node test-db-manager.js [switch|restore|start-local|stop-local] [env]');
+    console.log('Usage: node test-db-manager.js [switch|restore|start-local|stop-local|reset-data] [env]');
     process.exit(1);
 }
