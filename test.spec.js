@@ -1,6 +1,5 @@
 import { test, expect } from '@playwright/test';
 
-// Reset state before each test for isolation
 test.beforeEach(async ({ page }) => {
   // Reset SpacetimeDB state if available
   try {
@@ -9,10 +8,8 @@ test.beforeEach(async ({ page }) => {
   } catch (error) {
     console.log('State reset skipped - SpacetimeDB may not be running');
   }
-});
 
-// Enhanced error handling for SpacetimeDB connection issues
-test.beforeEach(async ({ page }) => {
+  // Enhanced error handling for SpacetimeDB connection issues
   page.on('console', msg => {
     if (msg.type() === 'error' || msg.text().includes('ERROR')) {
       console.log(`[BROWSER ERROR] ${msg.text()}`);

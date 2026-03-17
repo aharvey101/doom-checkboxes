@@ -1,7 +1,15 @@
 import { test, expect } from '@playwright/test';
 
-// Enhanced error handling for SpacetimeDB connection issues
 test.beforeEach(async ({ page }) => {
+  // Reset SpacetimeDB state if available
+  try {
+    const { execSync } = await import('child_process');
+    execSync('node scripts/test-db-manager.js reset-data', { stdio: 'ignore' });
+  } catch (error) {
+    console.log('State reset skipped - SpacetimeDB may not be running');
+  }
+
+  // Enhanced error handling for SpacetimeDB connection issues
   page.on('console', msg => {
     if (msg.type() === 'error' || msg.text().includes('ERROR')) {
       console.log(`[BROWSER ERROR] ${msg.text()}`);
