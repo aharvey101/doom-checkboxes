@@ -1,30 +1,15 @@
 #!/usr/bin/env node
-import path from 'path';
 
 /**
  * Playwright global teardown for SpacetimeDB collaborative checkbox tests
- * Cleans up test environment and restores original configuration
+ * Cleans up test environment
  */
 async function globalTeardown() {
   console.log('🧹 Starting Playwright global teardown...');
   
   try {
-    // Import the test database manager
-    const modulePath = path.resolve('../scripts/test-db-manager.js');
-    const module = await import(modulePath);
-    
-    // Create instance - handle both default and named exports
-    const TestDatabaseManager = module.TestDatabaseManager || module.default;
-    const dbManager = new TestDatabaseManager();
-    
-    // Restore original environment configuration
-    await dbManager.restoreEnvironment();
-    
-    // Stop local SpacetimeDB if we started it in CI
-    const testEnv = process.env.TEST_ENV || 'ci';
-    if (testEnv === 'ci') {
-      await dbManager.stopLocalSpacetimeDB();
-    }
+    // For now, teardown is minimal since setup only resets test state
+    // In the future, this could include cleanup tasks like stopping test servers
     
     console.log('✅ Playwright global teardown completed successfully');
   } catch (error) {

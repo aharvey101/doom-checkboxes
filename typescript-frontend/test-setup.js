@@ -9,28 +9,17 @@ async function globalSetup() {
   console.log('🚀 Starting Playwright global setup...');
   
   try {
-    // Import the test database manager
-    const modulePath = path.resolve('../scripts/test-db-manager.js');
-    const module = await import(modulePath);
-    
-    // Create instance - handle both default and named exports
-    const TestDatabaseManager = module.TestDatabaseManager || module.default;
-    const dbManager = new TestDatabaseManager();
+    // Import the reset test state function
+    const modulePath = path.resolve('../scripts/reset-test-state.js');
+    const { resetTestState } = await import(modulePath);
 
-    // Switch to appropriate test environment
-    const testEnv = process.env.TEST_ENV || 'ci';
-    console.log(`📋 Setting up environment: ${testEnv}`);
-    
-    if (testEnv === 'ci') {
-      // Start local SpacetimeDB for CI environment
-      await dbManager.startLocalSpacetimeDB();
-    }
-    
-    // Switch to test environment configuration
-    await dbManager.switchEnvironment(testEnv);
-    
     // Reset test data to ensure clean state
-    await dbManager.resetTestData();
+    console.log('📋 Resetting test state...');
+    const success = await resetTestState();
+    
+    if (!success) {
+      throw new Error('Failed to reset test state');
+    }
     
     console.log('✅ Playwright global setup completed successfully');
   } catch (error) {

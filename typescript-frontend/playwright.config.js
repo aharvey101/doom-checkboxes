@@ -23,6 +23,9 @@ export default defineConfig({
     trace: 'on-first-retry',
     video: 'retain-on-failure',
     screenshot: 'only-on-failure',
+    // Additional browser settings for SpacetimeDB WebSocket testing
+    permissions: ['clipboard-read', 'clipboard-write'],
+    viewport: { width: 1280, height: 720 },
   },
   
   // Environment-specific projects
@@ -68,12 +71,4 @@ export default defineConfig({
   
   // Output directories
   outputDir: 'test-results/',
-  
-  // Browser configuration
-  use: {
-    ...((typeof module !== 'undefined' && module.exports || {}).use || {}),
-    // Additional browser settings for SpacetimeDB WebSocket testing
-    permissions: ['clipboard-read', 'clipboard-write'],
-    viewport: { width: 1280, height: 720 },
-  },
 });
