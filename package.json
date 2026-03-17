@@ -5,8 +5,10 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "test": "echo 'Run specific tests from typescript-frontend directory:' && echo '  npm run test:unit    # Unit tests (Vitest)' && echo '  npm run test:e2e     # E2E tests (Playwright)' && echo '  npm run test:full    # Complete test suite'",
+    "test": "echo 'Available test commands:' && echo '  npm run test:smoke   # Quick smoke tests only' && echo '  npm run test:e2e     # Full E2E test suite' && echo '  npm run test:full    # Complete test suite'",
+    "test:smoke": "npx playwright test smoke-test.spec.js",
     "test:e2e": "cd typescript-frontend && npm run test:e2e",
+    "test:e2e:ci": "PLAYWRIGHT_BASE_URL=http://localhost:5173 TEST_ENV=ci npx playwright test --project=ci",
     "test:integration": "cd typescript-frontend && npm run test:integration",
     "test:full": "cd typescript-frontend && npm run test:full"
   },

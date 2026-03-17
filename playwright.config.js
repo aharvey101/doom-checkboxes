@@ -12,11 +12,11 @@ export default defineConfig({
   ],
   
   // SpacetimeDB and collaborative features need time
-  timeout: 15000, // Reduce timeout to prevent hangs
-  expect: { timeout: 5000 },
+  timeout: 30000, // Increase individual test timeout to reduce retries
+  expect: { timeout: 10000 }, // Increase expect timeout for SpacetimeDB operations
   
   // Handle SpacetimeDB startup delays and occasional connection issues
-  retries: process.env.CI ? 1 : 0, // Reduce retries in CI to prevent long hangs
+  retries: process.env.CI ? 0 : 0, // Disable retries to save time - rely on proper test design
   workers: 1, // Sequential execution for collaborative state management
   
   // Global configuration
