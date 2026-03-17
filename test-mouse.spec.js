@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
+import { execSync } from 'child_process';
 
 test.beforeEach(async ({ page }) => {
   // Reset SpacetimeDB state if available
   try {
-    const { execSync } = await import('child_process');
     execSync('node scripts/test-db-manager.js reset-data', { stdio: 'ignore' });
   } catch (error) {
     console.log('State reset skipped - SpacetimeDB may not be running');
@@ -24,9 +24,7 @@ test.beforeEach(async ({ page }) => {
 test.describe('Mouse interactions and visual feedback', () => {
 
   test('checkboxes can be toggled by clicking', async ({ page }) => {
-    page.on('console', msg => console.log('[CONSOLE]', msg.text()));
-    page.on('pageerror', err => console.log('[ERROR]', err));
-    
+
     const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000';
     await page.goto(`${baseURL}/?t=${Date.now()}`, { waitUntil: 'networkidle' });
     
@@ -62,9 +60,7 @@ test.describe('Mouse interactions and visual feedback', () => {
   });
 
   test('checked counter element exists and displays a number', async ({ page }) => {
-    page.on('console', msg => console.log('[CONSOLE]', msg.text()));
-    page.on('pageerror', err => console.log('[ERROR]', err));
-    
+
     const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000';
     await page.goto(`${baseURL}/?t=${Date.now()}`, { waitUntil: 'networkidle' });
     
@@ -88,9 +84,7 @@ test.describe('Mouse interactions and visual feedback', () => {
   });
 
   test('checkbox parent gets correct CSS class when checked', async ({ page }) => {
-    page.on('console', msg => console.log('[CONSOLE]', msg.text()));
-    page.on('pageerror', err => console.log('[ERROR]', err));
-    
+
     const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000';
     await page.goto(`${baseURL}/?t=${Date.now()}`, { waitUntil: 'networkidle' });
     
@@ -136,9 +130,7 @@ test.describe('Mouse interactions and visual feedback', () => {
   });
 
   test('multiple checkboxes can be clicked in sequence', async ({ page }) => {
-    page.on('console', msg => console.log('[CONSOLE]', msg.text()));
-    page.on('pageerror', err => console.log('[ERROR]', err));
-    
+
     const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000';
     await page.goto(`${baseURL}/?t=${Date.now()}`, { waitUntil: 'networkidle' });
     
@@ -168,9 +160,7 @@ test.describe('Mouse interactions and visual feedback', () => {
   });
 
   test('grid updates when panning after checkbox click', async ({ page }) => {
-    page.on('console', msg => console.log('[CONSOLE]', msg.text()));
-    page.on('pageerror', err => console.log('[ERROR]', err));
-    
+
     const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000';
     await page.goto(`${baseURL}/?t=${Date.now()}`, { waitUntil: 'networkidle' });
     
@@ -205,9 +195,7 @@ test.describe('Mouse interactions and visual feedback', () => {
   });
 
   test('status indicator displays connection state', async ({ page }) => {
-    page.on('console', msg => console.log('[CONSOLE]', msg.text()));
-    page.on('pageerror', err => console.log('[ERROR]', err));
-    
+
     const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000';
     await page.goto(`${baseURL}/?t=${Date.now()}`, { waitUntil: 'networkidle' });
     
@@ -227,9 +215,7 @@ test.describe('Mouse interactions and visual feedback', () => {
   });
 
   test('checkbox data attributes are correct', async ({ page }) => {
-    page.on('console', msg => console.log('[CONSOLE]', msg.text()));
-    page.on('pageerror', err => console.log('[ERROR]', err));
-    
+
     const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000';
     await page.goto(`${baseURL}/?t=${Date.now()}`, { waitUntil: 'networkidle' });
     
@@ -252,9 +238,7 @@ test.describe('Mouse interactions and visual feedback', () => {
   });
 
   test('clicking different checkboxes in grid works', async ({ page }) => {
-    page.on('console', msg => console.log('[CONSOLE]', msg.text()));
-    page.on('pageerror', err => console.log('[ERROR]', err));
-    
+
     const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000';
     await page.goto(`${baseURL}/?t=${Date.now()}`, { waitUntil: 'networkidle' });
     

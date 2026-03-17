@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
+import { execSync } from 'child_process';
 
 test.beforeEach(async ({ page }) => {
   // Reset SpacetimeDB state if available
   try {
-    const { execSync } = await import('child_process');
     execSync('node scripts/test-db-manager.js reset-data', { stdio: 'ignore' });
   } catch (error) {
     console.log('State reset skipped - SpacetimeDB may not be running');

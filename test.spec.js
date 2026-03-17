@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
+import { execSync } from 'child_process';
 
 test.beforeEach(async ({ page }) => {
   // Reset SpacetimeDB state if available
   try {
-    const { execSync } = await import('child_process');
     execSync('node scripts/test-db-manager.js reset-data', { stdio: 'ignore' });
   } catch (error) {
     console.log('State reset skipped - SpacetimeDB may not be running');
@@ -22,9 +22,6 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('page loads and WASM initializes', async ({ page }) => {
-  page.on('console', msg => console.log(msg.text()));
-  page.on('pageerror', err => console.log('ERROR:', err));
-  
   const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000';
   await page.goto(baseURL, { waitUntil: 'networkidle' });
   
@@ -42,9 +39,6 @@ test('page loads and WASM initializes', async ({ page }) => {
 });
 
 test('arrow keys pan the grid', async ({ page }) => {
-  page.on('console', msg => console.log(msg.text()));
-  page.on('pageerror', err => console.log('ERROR:', err));
-  
   const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000';
   await page.goto(baseURL, { waitUntil: 'networkidle' });
   
@@ -71,9 +65,6 @@ test('arrow keys pan the grid', async ({ page }) => {
 });
 
 test('checkboxes can be clicked', async ({ page }) => {
-  page.on('console', msg => console.log(msg.text()));
-  page.on('pageerror', err => console.log('ERROR:', err));
-  
   const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000';
   await page.goto(baseURL, { waitUntil: 'networkidle' });
   

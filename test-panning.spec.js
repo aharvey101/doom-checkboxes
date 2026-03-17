@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
+import { execSync } from 'child_process';
 
 test.beforeEach(async ({ page }) => {
   // Reset SpacetimeDB state if available
   try {
-    const { execSync } = await import('child_process');
     execSync('node scripts/test-db-manager.js reset-data', { stdio: 'ignore' });
   } catch (error) {
     console.log('State reset skipped - SpacetimeDB may not be running');
@@ -24,9 +24,7 @@ test.beforeEach(async ({ page }) => {
 test.describe('Panning functionality', () => {
   
   test('grid updates position with arrow right', async ({ page }) => {
-    page.on('console', msg => console.log('[CONSOLE]', msg.text()));
-    page.on('pageerror', err => console.log('[ERROR]', err));
-    
+
     // Force cache bust
     const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000';
     await page.goto(`${baseURL}/?t=${Date.now()}`, { waitUntil: 'networkidle' });
@@ -63,9 +61,7 @@ test.describe('Panning functionality', () => {
   });
 
   test('grid updates position with arrow left', async ({ page }) => {
-    page.on('console', msg => console.log('[CONSOLE]', msg.text()));
-    page.on('pageerror', err => console.log('[ERROR]', err));
-    
+
     const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000';
     await page.goto(`${baseURL}/?t=${Date.now()}`, { waitUntil: 'networkidle' });
     
@@ -98,9 +94,7 @@ test.describe('Panning functionality', () => {
   });
 
   test('grid updates position with arrow down', async ({ page }) => {
-    page.on('console', msg => console.log('[CONSOLE]', msg.text()));
-    page.on('pageerror', err => console.log('[ERROR]', err));
-    
+
     const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000';
     await page.goto(`${baseURL}/?t=${Date.now()}`, { waitUntil: 'networkidle' });
     
@@ -129,9 +123,7 @@ test.describe('Panning functionality', () => {
   });
 
   test('grid updates position with arrow up', async ({ page }) => {
-    page.on('console', msg => console.log('[CONSOLE]', msg.text()));
-    page.on('pageerror', err => console.log('[ERROR]', err));
-    
+
     const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000';
     await page.goto(`${baseURL}/?t=${Date.now()}`, { waitUntil: 'networkidle' });
     
@@ -164,9 +156,7 @@ test.describe('Panning functionality', () => {
   });
 
   test('multiple arrow key presses pan continuously', async ({ page }) => {
-    page.on('console', msg => console.log('[CONSOLE]', msg.text()));
-    page.on('pageerror', err => console.log('[ERROR]', err));
-    
+
     const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000';
     await page.goto(`${baseURL}/?t=${Date.now()}`, { waitUntil: 'networkidle' });
     
@@ -209,9 +199,7 @@ test.describe('Panning functionality', () => {
   });
 
   test('diagonal panning (right then down)', async ({ page }) => {
-    page.on('console', msg => console.log('[CONSOLE]', msg.text()));
-    page.on('pageerror', err => console.log('[ERROR]', err));
-    
+
     const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000';
     await page.goto(`${baseURL}/?t=${Date.now()}`, { waitUntil: 'networkidle' });
     
@@ -244,9 +232,7 @@ test.describe('Panning functionality', () => {
   });
 
   test('viewport dimensions display correctly', async ({ page }) => {
-    page.on('console', msg => console.log('[CONSOLE]', msg.text()));
-    page.on('pageerror', err => console.log('[ERROR]', err));
-    
+
     const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000';
     await page.goto(`${baseURL}/?t=${Date.now()}`, { waitUntil: 'networkidle' });
     
@@ -267,9 +253,7 @@ test.describe('Panning functionality', () => {
   });
 
   test('columns display correctly', async ({ page }) => {
-    page.on('console', msg => console.log('[CONSOLE]', msg.text()));
-    page.on('pageerror', err => console.log('[ERROR]', err));
-    
+
     const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000';
     await page.goto(`${baseURL}/?t=${Date.now()}`, { waitUntil: 'networkidle' });
     
@@ -295,9 +279,7 @@ test.describe('Panning functionality', () => {
   });
 
   test('grid remains responsive after many pan operations', async ({ page }) => {
-    page.on('console', msg => console.log('[CONSOLE]', msg.text()));
-    page.on('pageerror', err => console.log('[ERROR]', err));
-    
+
     const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000';
     await page.goto(`${baseURL}/?t=${Date.now()}`, { waitUntil: 'networkidle' });
     
