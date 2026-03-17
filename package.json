@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "A real-time collaborative checkbox grid supporting 1 million checkboxes (scalable to 1 billion) using SpacetimeDB 0.1 backend and vanilla WASM frontend.",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "test": "echo 'Run specific tests from typescript-frontend directory:' && echo '  npm run test:unit    # Unit tests (Vitest)' && echo '  npm run test:e2e     # E2E tests (Playwright)' && echo '  npm run test:full    # Complete test suite'",
     "test:e2e": "cd typescript-frontend && npm run test:e2e",
