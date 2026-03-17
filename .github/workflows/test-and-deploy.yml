@@ -40,6 +40,8 @@ jobs:
 
       - name: Install dependencies
         run: |
+          echo "Installing root dependencies..."
+          npm install --verbose
           echo "Installing typescript-frontend dependencies..."
           cd typescript-frontend
           npm install --verbose
@@ -50,6 +52,9 @@ jobs:
 
       - name: Install Playwright browsers
         run: |
+          echo "Installing Playwright browsers for root..."
+          npx playwright install --with-deps chromium firefox
+          echo "Installing Playwright browsers for typescript-frontend..."
           cd typescript-frontend
           npx playwright install --with-deps chromium firefox
 
