@@ -1,6 +1,6 @@
 // SpacetimeDB backend for collaborative checkboxes
 
-use spacetimedb::{reducer, table, ReducerContext, Table};
+use spacetimedb::{log, reducer, table, ReducerContext, Table};
 
 /// Stores checkbox state in chunks of 1 million checkboxes each  
 /// Each chunk = 125KB (1,000,000 bits / 8 bytes per bit)
@@ -28,24 +28,43 @@ fn set_bit(data: &mut [u8], bit_index: usize, value: bool) {
 
 /// Update a single checkbox bit in a chunk
 #[reducer]
-pub fn update_checkbox(ctx: &ReducerContext, chunk_id: u32, bit_offset: u16, checked: bool) {
+pub fn update_checkbox(ctx: &ReducerContext, chunkId: u32, bitOffset: u32, checked: bool) {
+    log::info!(
+        "update_checkbox called: chunkId={}, bitOffset={}, checked={}",
+        chunkId,
+        bitOffset,
+        checked
+    );
+
     // Try to find existing chunk by primary key
-    if let Some(mut row) = ctx.db.checkbox_chunk().chunk_id().find(chunk_id) {
-        // Set the bit
-        set_bit(&mut row.state, bit_offset as usize, checked);
+    if let Some(mut row) = ctx.db.checkbox_chunk().chunk_id().find(chunkId) {
+        log::info!("Found existing chunk with version: {}", row.version);
+
+        // Always perform the bit operation - let SpacetimeDB detect if it's a real change
+        set_bit(&mut row.state, bitOffset as usize, checked);
         row.version += 1;
+
+        let new_version = row.version;
+
+        // Use direct update - let SpacetimeDB handle change detection
         ctx.db.checkbox_chunk().chunk_id().update(row);
+
+        log::info!("Successfully updated chunk to version: {}", new_version);
         return;
     }
 
+    log::info!("Creating new chunk");
+
     // If chunk doesn't exist, create it and set the bit
     let mut new_chunk = CheckboxChunk {
-        chunk_id,
+        chunk_id: chunkId,
         state: vec![0u8; 125_000],
         version: 0,
     };
-    set_bit(&mut new_chunk.state, bit_offset as usize, checked);
+    set_bit(&mut new_chunk.state, bitOffset as usize, checked);
     ctx.db.checkbox_chunk().insert(new_chunk);
+
+    log::info!("Successfully created new chunk");
 }
 
 /// Add a new chunk for expanding to additional checkboxes
@@ -58,6 +77,19 @@ pub fn add_chunk(ctx: &ReducerContext, chunk_id: u32) {
         version: 0,
     };
     ctx.db.checkbox_chunk().insert(new_chunk);
+}
+
+/// Clear all checkbox data for test state reset
+#[reducer]
+pub fn clear_all_checkboxes(ctx: &ReducerContext) {
+    log::info!("clear_all_checkboxes called - clearing all checkbox data");
+
+    // Delete all rows from the checkbox_chunk table
+    for row in ctx.db.checkbox_chunk().iter() {
+        ctx.db.checkbox_chunk().chunk_id().delete(row.chunk_id);
+    }
+
+    log::info!("Successfully cleared all checkbox data");
 }
 
 #[cfg(test)]
