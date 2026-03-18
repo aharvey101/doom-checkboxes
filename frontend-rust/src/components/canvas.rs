@@ -37,7 +37,9 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
             // Schedule render on next animation frame
             let closure = Closure::once(Box::new(move || {
                 state_copy.render_pending.set(false);
-                if let Some(canvas) = canvas_ref_inner.get() {
+                // Use get_untracked() since we're in a requestAnimationFrame callback,
+                // not a reactive tracking context
+                if let Some(canvas) = canvas_ref_inner.get_untracked() {
                     let mut renderer_borrow = renderer_inner.borrow_mut();
 
                     // Initialize WebGL renderer on first render
@@ -92,12 +94,20 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
     });
 
     // Chunk subscription effect - subscribe to visible chunks when viewport changes
+    // Only subscribe when connected to avoid "Still in CONNECTING state" errors
     Effect::new(move |_| {
+        // Track connection status - only subscribe when connected
+        let status = state.status.get();
+        if status != crate::state::ConnectionStatus::Connected {
+            return;
+        }
+
         let offset_x = state.offset_x.get();
         let offset_y = state.offset_y.get();
         let scale = state.scale.get();
 
-        if let Some(canvas) = canvas_ref.get() {
+        // Use get_untracked to avoid reactive tracking warning for canvas ref
+        if let Some(canvas) = canvas_ref.get_untracked() {
             let width = canvas.width() as f64;
             let height = canvas.height() as f64;
 

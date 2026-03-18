@@ -444,7 +444,7 @@ pub fn subscribe(client: &SharedClient, queries: &[&str]) {
 
     let subscribe = Subscribe {
         request_id,
-        query_set_id: QuerySetId::new(1), // Use a fixed query set ID
+        query_set_id: QuerySetId::new(request_id), // Unique query set ID per subscription
         query_strings: queries.iter().map(|s| (*s).into()).collect(),
     };
 

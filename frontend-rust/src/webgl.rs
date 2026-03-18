@@ -12,8 +12,7 @@ use web_sys::{
 };
 
 use crate::constants::{
-    CELL_SIZE, CHUNKS_X, CHUNK_SIZE, COLOR_CHECKED, COLOR_GRID, COLOR_UNCHECKED, GRID_HEIGHT,
-    GRID_WIDTH,
+    CELL_SIZE, CHUNKS_X, CHUNK_SIZE, COLOR_CHECKED, COLOR_GRID, COLOR_UNCHECKED,
 };
 use crate::utils::visible_chunk_range;
 use std::collections::HashMap;
@@ -204,7 +203,8 @@ impl WebGLRenderer {
 
         // Set static uniforms
         gl.uniform1f(Some(&u_cell_size), crate::constants::CELL_SIZE as f32);
-        gl.uniform2f(Some(&u_grid_size), GRID_WIDTH as f32, GRID_HEIGHT as f32);
+        // Each chunk is CHUNK_SIZE x CHUNK_SIZE, not the full grid
+        gl.uniform2f(Some(&u_grid_size), CHUNK_SIZE as f32, CHUNK_SIZE as f32);
 
         // Parse and set colors
         let (cr, cg, cb) = parse_hex_color(COLOR_CHECKED);
@@ -274,14 +274,33 @@ impl WebGLRenderer {
         offset_y: f64,
         scale: f64,
     ) {
-        let width = canvas.width() as f32;
-        let height = canvas.height() as f32;
+        let width = canvas.width() as f64;
+        let height = canvas.height() as f64;
 
         // Calculate chunk's world position
         let chunk_x = chunk_id % CHUNKS_X;
         let chunk_y = chunk_id / CHUNKS_X;
-        let chunk_offset_x = offset_x + (chunk_x * CHUNK_SIZE) as f64 * CELL_SIZE * scale;
-        let chunk_offset_y = offset_y + (chunk_y * CHUNK_SIZE) as f64 * CELL_SIZE * scale;
+        let chunk_pixel_size = CHUNK_SIZE as f64 * CELL_SIZE * scale;
+        let chunk_screen_x = offset_x + (chunk_x as f64) * chunk_pixel_size;
+        let chunk_screen_y = offset_y + (chunk_y as f64) * chunk_pixel_size;
+
+        // Scissor test to only draw within this chunk's region
+        self.gl.enable(GL::SCISSOR_TEST);
+
+        // Clip to chunk bounds (WebGL scissor Y is from bottom)
+        let scissor_x = chunk_screen_x.max(0.0) as i32;
+        let scissor_y = (height - chunk_screen_y - chunk_pixel_size).max(0.0) as i32;
+        let scissor_w = chunk_pixel_size.min(width - chunk_screen_x.max(0.0)) as i32;
+        let scissor_h = chunk_pixel_size
+            .min(height - (height - chunk_screen_y - chunk_pixel_size).max(0.0))
+            as i32;
+
+        if scissor_w <= 0 || scissor_h <= 0 {
+            self.gl.disable(GL::SCISSOR_TEST);
+            return;
+        }
+
+        self.gl.scissor(scissor_x, scissor_y, scissor_w, scissor_h);
 
         // Upload chunk texture
         self.gl
@@ -307,16 +326,19 @@ impl WebGLRenderer {
         }
 
         // Update uniforms for this chunk's position
-        self.gl.uniform2f(Some(&self.u_resolution), width, height);
+        self.gl
+            .uniform2f(Some(&self.u_resolution), width as f32, height as f32);
         self.gl.uniform2f(
             Some(&self.u_offset),
-            chunk_offset_x as f32,
-            chunk_offset_y as f32,
+            chunk_screen_x as f32,
+            chunk_screen_y as f32,
         );
         self.gl.uniform1f(Some(&self.u_scale), scale as f32);
 
         // Draw
         self.gl.draw_arrays(GL::TRIANGLES, 0, 6);
+
+        self.gl.disable(GL::SCISSOR_TEST);
     }
 
     pub fn resize(&self, width: u32, height: u32) {

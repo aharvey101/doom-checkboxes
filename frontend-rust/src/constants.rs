@@ -11,7 +11,7 @@ pub const CHUNKS_Y: u32 = 25; // GRID_HEIGHT / CHUNK_SIZE
 pub const TOTAL_CHUNKS: u32 = CHUNKS_X * CHUNKS_Y; // 1000
 
 // Zoom bounds
-pub const MIN_SCALE: f64 = 0.1; // Lower min to see more of the larger grid
+pub const MIN_SCALE: f64 = 0.1;
 pub const MAX_SCALE: f64 = 10.0;
 
 // Colors
