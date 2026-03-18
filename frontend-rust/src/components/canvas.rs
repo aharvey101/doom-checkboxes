@@ -4,23 +4,25 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, MouseEvent, WheelEvent};
+use web_sys::{MouseEvent, WheelEvent};
 
 use crate::constants::*;
 use crate::db::toggle_checkbox;
 use crate::state::AppState;
-use crate::utils::{canvas_to_grid, get_bit};
+use crate::utils::canvas_to_grid;
+use crate::webgl::WebGLRenderer;
 
 #[component]
 pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
     let canvas_ref = NodeRef::<Canvas>::new();
 
-    // Store canvas_ref in Rc for use in rAF callback
-    let canvas_ref_for_raf = Rc::new(RefCell::new(canvas_ref));
+    // WebGL renderer stored in RefCell for mutation
+    let renderer: Rc<RefCell<Option<WebGLRenderer>>> = Rc::new(RefCell::new(None));
 
     // Request a render on the next animation frame (throttled)
     let request_render = {
-        let canvas_ref_clone = canvas_ref_for_raf.clone();
+        let renderer_clone = renderer.clone();
+        let canvas_ref_clone = canvas_ref;
         move || {
             // If render already pending, skip
             if state.render_pending.get_untracked() {
@@ -28,14 +30,39 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
             }
             state.render_pending.set(true);
 
-            let canvas_ref_inner = *canvas_ref_clone.borrow();
+            let renderer_inner = renderer_clone.clone();
+            let canvas_ref_inner = canvas_ref_clone;
             let state_copy = state;
 
             // Schedule render on next animation frame
             let closure = Closure::once(Box::new(move || {
                 state_copy.render_pending.set(false);
                 if let Some(canvas) = canvas_ref_inner.get() {
-                    render_grid(&canvas, &state_copy);
+                    let mut renderer_borrow = renderer_inner.borrow_mut();
+
+                    // Initialize WebGL renderer on first render
+                    if renderer_borrow.is_none() {
+                        match WebGLRenderer::new(&canvas) {
+                            Ok(r) => {
+                                web_sys::console::log_1(&"WebGL renderer initialized".into());
+                                *renderer_borrow = Some(r);
+                            }
+                            Err(e) => {
+                                web_sys::console::error_1(
+                                    &format!("WebGL init failed: {}", e).into(),
+                                );
+                                return;
+                            }
+                        }
+                    }
+
+                    if let Some(ref r) = *renderer_borrow {
+                        let chunk_data = state_copy.chunk_data.get_untracked();
+                        let offset_x = state_copy.offset_x.get_untracked();
+                        let offset_y = state_copy.offset_y.get_untracked();
+                        let scale = state_copy.scale.get_untracked();
+                        r.render(&canvas, &chunk_data, offset_x, offset_y, scale);
+                    }
                 }
             }) as Box<dyn FnOnce()>);
 
@@ -61,6 +88,7 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
     });
 
     // Window resize effect
+    let renderer_for_resize = renderer.clone();
     Effect::new(move |_| {
         if let Some(canvas) = canvas_ref.get() {
             let window = web_sys::window().expect("no window");
@@ -68,7 +96,14 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
             let height = window.inner_height().unwrap().as_f64().unwrap() - 120.0;
             canvas.set_width(width as u32);
             canvas.set_height(height as u32);
-            render_grid(&canvas, &state);
+
+            // Notify renderer of resize
+            if let Some(ref r) = *renderer_for_resize.borrow() {
+                r.resize(width as u32, height as u32);
+            }
+
+            // Trigger re-render
+            state.render_pending.set(false); // Reset to allow new render
         }
     });
 
@@ -133,52 +168,6 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
             on:wheel=on_wheel
             style=cursor_style
         />
-    }
-}
-
-fn render_grid(canvas: &HtmlCanvasElement, state: &AppState) {
-    let ctx: CanvasRenderingContext2d = canvas
-        .get_context("2d")
-        .unwrap()
-        .unwrap()
-        .dyn_into()
-        .unwrap();
-
-    let width = canvas.width() as f64;
-    let height = canvas.height() as f64;
-
-    let chunk_data = state.chunk_data.get();
-    let offset_x = state.offset_x.get();
-    let offset_y = state.offset_y.get();
-    let scale = state.scale.get();
-    let cell_size = CELL_SIZE * scale;
-
-    // Clear canvas
-    ctx.set_fill_style_str(COLOR_GRID);
-    ctx.fill_rect(0.0, 0.0, width, height);
-
-    // Calculate visible range
-    let start_col = ((-offset_x / cell_size).floor() as i32).max(0) as u32;
-    let start_row = ((-offset_y / cell_size).floor() as i32).max(0) as u32;
-    let end_col = (((width - offset_x) / cell_size).ceil() as u32).min(GRID_WIDTH);
-    let end_row = (((height - offset_y) / cell_size).ceil() as u32).min(GRID_HEIGHT);
-
-    // Draw visible checkboxes
-    for row in start_row..end_row {
-        for col in start_col..end_col {
-            let bit_index = row * GRID_WIDTH + col;
-            let is_checked = get_bit(&chunk_data, bit_index);
-
-            let x = offset_x + (col as f64) * cell_size;
-            let y = offset_y + (row as f64) * cell_size;
-
-            ctx.set_fill_style_str(if is_checked {
-                COLOR_CHECKED
-            } else {
-                COLOR_UNCHECKED
-            });
-            ctx.fill_rect(x + 0.5, y + 0.5, cell_size - 1.0, cell_size - 1.0);
-        }
     }
 }
 

@@ -4,6 +4,7 @@ pub mod constants;
 pub mod db;
 pub mod state;
 pub mod utils;
+pub mod webgl;
 pub mod ws_client;
 
 // Re-export for convenience

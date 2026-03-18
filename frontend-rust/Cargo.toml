@@ -34,6 +34,13 @@ web-sys = { version = "0.3", features = [
     "CloseEvent",
     "ErrorEvent",
     "Blob",
+    # WebGL
+    "WebGlRenderingContext",
+    "WebGlProgram",
+    "WebGlShader",
+    "WebGlBuffer",
+    "WebGlTexture",
+    "WebGlUniformLocation",
 ] }
 js-sys = "0.3"
 console_error_panic_hook = "0.1"
