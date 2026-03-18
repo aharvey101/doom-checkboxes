@@ -8,7 +8,10 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 leptos = { version = "0.7", features = ["csr"] }
-spacetimedb-sdk = "2.0"
+
+# SpacetimeDB SDK: currently disabled for WASM due to openssl-sys dependency issue
+# Will be re-enabled in Chunk 3/4 when SpacetimeDB integration is implemented
+# spacetimedb-sdk = "2.0"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = [
