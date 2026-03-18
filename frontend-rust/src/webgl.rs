@@ -41,7 +41,8 @@ const FRAGMENT_SHADER: &str = r#"
     
     void main() {
         // Convert from normalized coords to pixel coords
-        vec2 pixelCoord = v_texCoord * u_resolution;
+        // Flip Y axis: WebGL has Y=0 at bottom, Canvas has Y=0 at top
+        vec2 pixelCoord = vec2(v_texCoord.x, 1.0 - v_texCoord.y) * u_resolution;
         
         // Apply viewport transform (inverse of rendering transform)
         vec2 gridPixel = (pixelCoord - u_offset) / (u_cellSize * u_scale);

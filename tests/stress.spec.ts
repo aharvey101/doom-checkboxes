@@ -1,6 +1,40 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("Checkbox Grid Stress Test", () => {
+  test("debug: check for console errors", async ({ page }) => {
+    const consoleMessages: string[] = [];
+    const consoleErrors: string[] = [];
+    
+    page.on("console", (msg) => {
+      consoleMessages.push(`[${msg.type()}] ${msg.text()}`);
+      if (msg.type() === "error") {
+        consoleErrors.push(msg.text());
+      }
+    });
+    
+    page.on("pageerror", (err) => {
+      consoleErrors.push(`PAGE ERROR: ${err.message}`);
+    });
+    
+    await page.goto("/");
+    
+    // Wait longer for WASM to load
+    await page.waitForTimeout(5000);
+    
+    console.log("Console messages:", consoleMessages);
+    console.log("Console errors:", consoleErrors);
+    
+    // Check if canvas exists
+    const canvasCount = await page.locator("canvas").count();
+    console.log("Canvas count:", canvasCount);
+    
+    // Get page HTML
+    const html = await page.content();
+    console.log("HTML preview:", html.substring(0, 500));
+    
+    expect(consoleErrors.length).toBe(0);
+  });
+
   test("measure actual in-browser click responsiveness", async ({ page }) => {
     await page.goto("/");
 
