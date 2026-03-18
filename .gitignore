@@ -39,3 +39,4 @@ playwright-report/
 # Built frontend bundle
 main.js
 # Generated SDK is now committed for Netlify builds
+.worktrees/
