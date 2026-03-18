@@ -70,6 +70,26 @@ pub enum ConnectionStatus {
 2. `create_effect` watching `chunk_data` triggers canvas re-render
 3. Pan/zoom events update viewport signals, also triggering re-render
 
+**Initial state:**
+- `chunk_data`: Empty `Vec<u8>` (125,000 zeros) - renders as all unchecked
+- `checked_count`: 0
+- `scale`: 1.0
+- `offset_x`, `offset_y`: 0.0
+- `status`: `Connecting`
+
+## Optimistic Updates
+
+When a user clicks a checkbox:
+
+1. **Immediate local update:** Modify `chunk_data` signal directly, toggle the bit, update `checked_count`
+2. **Send to server:** Call `conn.reducers.update_checkbox(0, bit_index, new_value)`
+3. **Server broadcast:** Server updates its state and broadcasts to all clients
+4. **Reconciliation:** When `on_update` callback fires, it overwrites `chunk_data` with server state
+
+**No conflict resolution needed:** The server is authoritative. If the local optimistic state differs from server state (e.g., another client toggled the same checkbox), the server's `on_update` will correct it. This matches the TS behavior exactly.
+
+**Clicks during disconnect:** If `status` is `Error`, clicks still update local state optimistically. When reconnected, the subscription will receive the current server state, overwriting local changes. This is acceptable - same behavior as TS version.
+
 ## Components
 
 ### App (app.rs)
@@ -106,6 +126,16 @@ Rendering algorithm (same as TS):
 
 ## SpacetimeDB Integration
 
+### Environment Detection (db.rs)
+
+```rust
+fn is_local() -> bool {
+    let window = web_sys::window().expect("no window");
+    let hostname = window.location().hostname().unwrap_or_default();
+    hostname == "localhost" || hostname == "127.0.0.1"
+}
+```
+
 ### Connection (db.rs)
 
 ```rust
@@ -120,10 +150,26 @@ pub async fn connect(state: AppState) -> DbConnection {
         .with_uri(uri)
         .with_database_name("checkboxes")
         .on_connect(/* register callbacks, subscribe */)
+        .on_disconnect(move || {
+            state.status.set(ConnectionStatus::Error);
+            state.status_message.set("Disconnected".to_string());
+        })
+        .on_connect_error(move |error| {
+            state.status.set(ConnectionStatus::Error);
+            state.status_message.set(format!("Connection failed: {}", error));
+        })
         .build()
         .await
 }
 ```
+
+### Error Handling & Reconnection
+
+**Connection errors:** Set `status` to `Error` with descriptive message. No automatic reconnection - matches TS behavior (user refreshes page to reconnect).
+
+**Disconnect:** Same as connection error - display "Disconnected" status.
+
+**Subscription errors:** Log to console, set `status` to `Error`.
 
 ### Table Callbacks
 
@@ -141,9 +187,25 @@ conn.db.checkbox_chunk.on_update(|_old, new| {
 
 ### Generated Bindings
 
-Run `spacetime generate --lang rust --out-dir frontend-rust/generated` to generate:
-- `checkbox_chunk` table type
-- `update_checkbox` reducer binding
+Run `spacetime generate --lang rust --out-dir frontend-rust/generated` to generate Rust types from the backend module.
+
+**Expected CheckboxChunk table schema:**
+
+```rust
+pub struct CheckboxChunk {
+    pub chunk_id: u32,      // Primary key, always 0 for now
+    pub state: Vec<u8>,     // 125,000 bytes (1M bits)
+    pub version: u64,       // Incremented on each update
+}
+```
+
+**Expected update_checkbox reducer signature:**
+
+```rust
+pub fn update_checkbox(chunk_id: u32, bit_offset: u32, checked: bool);
+```
+
+These match the backend `lib.rs` definitions.
 
 ## Utilities (utils.rs)
 
