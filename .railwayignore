@@ -1,0 +1,18 @@
+# Ignore build artifacts
+target/
+frontend-rust/target/
+backend/target/
+node_modules/
+dist/
+frontend-rust/dist/
+
+# Ignore git
+.git/
+
+# Ignore IDE
+.idea/
+.vscode/
+
+# Ignore test artifacts
+test-results/
+playwright-report/
