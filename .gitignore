@@ -35,3 +35,6 @@ generated/
 # Test artifacts  
 test-results/
 playwright-report/
+
+# Built frontend bundle
+main.js
