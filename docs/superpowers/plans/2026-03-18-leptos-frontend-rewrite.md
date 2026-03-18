@@ -423,6 +423,8 @@ pub mod constants;
 pub mod state;
 pub mod utils;
 
+// Note: db module will be added in Chunk 3
+
 // Re-export for convenience
 pub use app::App;
 pub use state::{AppState, ConnectionStatus};
@@ -713,7 +715,7 @@ fn handle_click(e: MouseEvent, state: &AppState, canvas_ref: &NodeRef<Canvas>) {
     if let Some((col, row)) = canvas_to_grid(x, y, offset_x, offset_y, scale) {
         let bit_index = row * GRID_WIDTH + col;
 
-        // Optimistic update
+        // Optimistic update (local only for now - SpacetimeDB integration in Chunk 4)
         let mut data = state.chunk_data.get();
         let current = get_bit(&data, bit_index);
         set_bit(&mut data, bit_index, !current);
@@ -721,8 +723,7 @@ fn handle_click(e: MouseEvent, state: &AppState, canvas_ref: &NodeRef<Canvas>) {
         state.chunk_data.set(data);
         state.checked_count.set(new_count);
 
-        // TODO: Send to server via SpacetimeDB reducer
-        // This will be implemented when we add db.rs
+        // Note: Server sync will be added in Chunk 4 (Task 18)
     }
 }
 
@@ -892,24 +893,20 @@ pub fn get_spacetimedb_uri() -> &'static str {
     }
 }
 
-/// Initialize SpacetimeDB connection
-/// Note: The actual connection implementation depends on the generated SDK API.
-/// This is a placeholder that will be updated based on the generated code structure.
+/// Initialize SpacetimeDB connection (stub - full implementation in Chunk 4)
+/// This sets up the status message. Actual connection logic will be added in Task 18.
 pub fn init_connection(state: AppState) {
     let uri = get_spacetimedb_uri();
-    let is_local = is_local();
+    let is_local_env = is_local();
     
     state.status_message.set(format!(
         "Connecting to {}...",
-        if is_local { "local" } else { "production" }
+        if is_local_env { "local" } else { "production" }
     ));
 
-    // TODO: Implement actual SpacetimeDB connection
-    // The exact API depends on spacetimedb-sdk for WASM
-    // This will be filled in after examining generated code
-    
-    log::info!("SpacetimeDB URI: {}", uri);
-    log::info!("Database: {}", DATABASE_NAME);
+    // Stub: Log connection attempt. Full implementation in Chunk 4 (Task 18).
+    web_sys::console::log_1(&format!("SpacetimeDB URI: {}", uri).into());
+    web_sys::console::log_1(&format!("Database: {}", DATABASE_NAME).into());
 }
 
 /// Update state from chunk data received from SpacetimeDB
@@ -950,6 +947,7 @@ git commit -m "feat(frontend-rust): add db module with connection helpers"
 
 ```rust
 use leptos::prelude::*;
+use std::sync::Once;
 
 use crate::components::{CheckboxCanvas, Header};
 use crate::db::init_connection;
@@ -957,12 +955,15 @@ use crate::state::AppState;
 
 const STYLES: &str = include_str!("styles.css");
 
+// Ensure connection is only initialized once
+static INIT: Once = Once::new();
+
 #[component]
 pub fn App() -> impl IntoView {
     let state = AppState::new();
 
-    // Initialize connection on mount
-    Effect::new(move |_| {
+    // Initialize connection once on mount
+    INIT.call_once(|| {
         init_connection(state);
     });
 
@@ -1007,54 +1008,176 @@ Expected: See header with "Connecting..." status, canvas renders empty grid
 
 ## Chunk 4: Full SpacetimeDB Integration
 
-### Task 18: Implement full SpacetimeDB connection
+### Task 18: Examine generated SDK and implement connection
 
 **Files:**
 - Modify: `frontend-rust/src/db.rs`
-- Modify: `frontend-rust/src/components/canvas.rs`
+- Modify: `frontend-rust/src/state.rs` (add connection storage)
 
-Note: This task requires examining the generated SpacetimeDB SDK code to understand the exact API. The implementation will depend on how `spacetimedb-sdk` works in WASM context.
+This task is a discovery + implementation task. The exact API depends on the generated code.
 
 - [ ] **Step 1: Examine generated SDK structure**
 
 Run: `cat frontend-rust/generated/mod.rs`
-Examine the generated types and connection API.
+Document: What types are exported? What is the DbConnection API?
 
-- [ ] **Step 2: Update db.rs with actual connection implementation**
+Run: `ls frontend-rust/generated/`
+Expected files: `mod.rs`, `checkbox_chunk.rs` (table), `update_checkbox_reducer.rs` (reducer)
 
-The implementation will follow this pattern (adjust based on actual generated API):
+- [ ] **Step 2: Add connection storage to AppState**
 
-```rust
-use crate::generated::{DbConnection, checkbox_chunk, update_checkbox};
-// ... rest of implementation based on generated code
-```
-
-- [ ] **Step 3: Add reducer call to canvas click handler**
-
-Update the `handle_click` function in `canvas.rs` to call the reducer:
+Update `frontend-rust/src/state.rs` to add a stored connection:
 
 ```rust
-// After optimistic update, send to server
-// conn.reducers.update_checkbox(0, bit_index, !current);
+use std::rc::Rc;
+use std::cell::RefCell;
+
+// Add to AppState struct:
+pub connection: StoredValue<Option<Rc<RefCell<DbConnection>>>>,
+
+// Add to AppState::new():
+connection: StoredValue::new(None),
 ```
 
-- [ ] **Step 4: Test end-to-end**
+- [ ] **Step 3: Implement full connection in db.rs**
 
-1. Start local SpacetimeDB: `spacetime start`
-2. Publish backend: `npm run publish` (or `spacetime publish`)
-3. Run frontend: `cd frontend-rust && trunk serve`
-4. Open browser, click checkboxes, verify sync
+Replace the stub `init_connection` with actual implementation. Pattern:
+
+```rust
+use crate::generated::{DbConnection, CheckboxChunk};
+use wasm_bindgen_futures::spawn_local;
+
+pub fn init_connection(state: AppState) {
+    let uri = get_spacetimedb_uri();
+    let is_local_env = is_local();
+    
+    state.status_message.set(format!(
+        "Connecting to {}...",
+        if is_local_env { "local" } else { "production" }
+    ));
+
+    spawn_local(async move {
+        match connect_to_spacetimedb(uri, state).await {
+            Ok(conn) => {
+                // Store connection for reducer calls
+                state.connection.set_value(Some(Rc::new(RefCell::new(conn))));
+                set_connected(&state);
+            }
+            Err(e) => {
+                set_error(&state, &format!("Connection failed: {}", e));
+            }
+        }
+    });
+}
+
+async fn connect_to_spacetimedb(uri: &str, state: AppState) -> Result<DbConnection, String> {
+    // Implementation depends on generated SDK API
+    // Pattern from spec:
+    let conn = DbConnection::builder()
+        .with_uri(uri)
+        .with_database_name(DATABASE_NAME)
+        .on_connect(move |connection, _identity| {
+            // Register table callbacks
+            connection.db.checkbox_chunk.on_insert(move |row| {
+                update_from_chunk(&state, row.state.clone());
+            });
+            
+            connection.db.checkbox_chunk.on_update(move |_old, new| {
+                update_from_chunk(&state, new.state.clone());
+            });
+            
+            // Subscribe
+            connection
+                .subscription_builder()
+                .subscribe("SELECT * FROM checkbox_chunk");
+        })
+        .on_disconnect(move || {
+            set_error(&state, "Disconnected");
+        })
+        .build()
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    Ok(conn)
+}
+```
+
+Note: Adjust based on actual generated API after Step 1.
+
+- [ ] **Step 4: Add toggle_checkbox function to db.rs**
+
+```rust
+pub fn toggle_checkbox(state: &AppState, bit_index: u32, checked: bool) {
+    if let Some(conn) = state.connection.get_value() {
+        conn.borrow().reducers.update_checkbox(0, bit_index, checked);
+    }
+}
+```
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add frontend-rust/src/db.rs frontend-rust/src/components/canvas.rs
-git commit -m "feat(frontend-rust): implement full SpacetimeDB integration"
+git add frontend-rust/src/db.rs frontend-rust/src/state.rs
+git commit -m "feat(frontend-rust): implement SpacetimeDB connection"
 ```
 
 ---
 
-### Task 19: Add npm scripts for Rust frontend
+### Task 19: Wire up canvas to use SpacetimeDB
+
+**Files:**
+- Modify: `frontend-rust/src/components/canvas.rs`
+
+- [ ] **Step 1: Import db module in canvas.rs**
+
+Add to imports:
+```rust
+use crate::db::toggle_checkbox;
+```
+
+- [ ] **Step 2: Update handle_click to call reducer**
+
+Replace the click handler body:
+
+```rust
+fn handle_click(e: MouseEvent, state: &AppState, canvas_ref: &NodeRef<Canvas>) {
+    let Some(canvas) = canvas_ref.get() else { return };
+    let rect = canvas.get_bounding_client_rect();
+    let x = e.client_x() as f64 - rect.left();
+    let y = e.client_y() as f64 - rect.top();
+
+    let offset_x = state.offset_x.get();
+    let offset_y = state.offset_y.get();
+    let scale = state.scale.get();
+
+    if let Some((col, row)) = canvas_to_grid(x, y, offset_x, offset_y, scale) {
+        let bit_index = row * GRID_WIDTH + col;
+
+        // Optimistic update
+        let mut data = state.chunk_data.get();
+        let current = get_bit(&data, bit_index);
+        let new_value = !current;
+        set_bit(&mut data, bit_index, new_value);
+        let new_count = count_bits(&data);
+        state.chunk_data.set(data);
+        state.checked_count.set(new_count);
+
+        // Send to server
+        toggle_checkbox(state, bit_index, new_value);
+    }
+}
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add frontend-rust/src/components/canvas.rs
+git commit -m "feat(frontend-rust): wire canvas clicks to SpacetimeDB reducer"
+```
+
+---
+
+### Task 20: Add npm scripts for Rust frontend
 
 **Files:**
 - Modify: `package.json`
@@ -1082,7 +1205,7 @@ git commit -m "chore: add npm scripts for Rust frontend"
 
 ---
 
-### Task 20: Final verification
+### Task 21: Final verification
 
 **Files:** None (verification only)
 
@@ -1094,22 +1217,45 @@ npm run generate:rust
 npm run build:frontend-rust
 ```
 
-- [ ] **Step 2: Manual testing checklist**
+Expected: All commands succeed without errors.
 
-Run `npm run dev:frontend-rust` and verify:
-- [ ] Grid renders with correct colors
-- [ ] Click toggles checkboxes
-- [ ] Shift+drag pans the view
-- [ ] Scroll wheel zooms
-- [ ] Connection status shows correctly
-- [ ] Stats update on checkbox toggle
-- [ ] Open two tabs, verify sync between them
+- [ ] **Step 2: Start SpacetimeDB and frontend**
 
-- [ ] **Step 3: Final commit**
+Terminal 1: `spacetime start` (if not already running)
+Terminal 2: `npm run dev:frontend-rust`
+
+Open: `http://127.0.0.1:8080`
+
+- [ ] **Step 3: Verify grid renders**
+
+Expected: See 1000x1000 grid with dark blue unchecked cells on dark background.
+
+- [ ] **Step 4: Verify click toggles checkboxes**
+
+Click a cell. Expected: Cell turns green, checked count increases.
+
+- [ ] **Step 5: Verify pan with shift+drag**
+
+Hold Shift, drag mouse. Expected: Grid pans smoothly.
+
+- [ ] **Step 6: Verify zoom with scroll wheel**
+
+Scroll up/down. Expected: Grid zooms in/out toward cursor.
+
+- [ ] **Step 7: Verify connection status**
+
+Expected: Status badge shows "Connected" (green) after initial load.
+
+- [ ] **Step 8: Verify multi-tab sync**
+
+Open second browser tab to same URL. Toggle checkbox in tab 1.
+Expected: Change appears in tab 2 within 1 second.
+
+- [ ] **Step 9: Final commit (if any fixes needed)**
 
 ```bash
 git add -A
-git commit -m "feat(frontend-rust): complete Leptos frontend implementation"
+git commit -m "fix(frontend-rust): address verification issues"
 ```
 
 ---
@@ -1120,10 +1266,10 @@ git commit -m "feat(frontend-rust): complete Leptos frontend implementation"
 |-------|-------|-------------|
 | 1 | 1-8 | Project setup, core modules (constants, utils, state, styles) |
 | 2 | 9-13 | Components (Header, Canvas, App), verify build |
-| 3 | 14-17 | SpacetimeDB bindings generation, db module, verify build |
-| 4 | 18-20 | Full SpacetimeDB integration, npm scripts, final verification |
+| 3 | 14-17 | SpacetimeDB bindings generation, db module stub, verify build |
+| 4 | 18-21 | Full SpacetimeDB integration, npm scripts, final verification |
 
-**Total tasks:** 20
+**Total tasks:** 21
 **Estimated time:** 2-3 hours
 
 **Dependencies:**
