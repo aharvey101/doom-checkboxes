@@ -1,11 +1,17 @@
-// Grid configuration: 1000x1000 = 1 million checkboxes
-pub const GRID_WIDTH: u32 = 1000;
-pub const GRID_HEIGHT: u32 = 1000;
-pub const TOTAL_CHECKBOXES: u32 = GRID_WIDTH * GRID_HEIGHT;
+// Grid configuration: 40,000 x 25,000 = 1 billion checkboxes
+pub const GRID_WIDTH: u32 = 40_000;
+pub const GRID_HEIGHT: u32 = 25_000;
+pub const TOTAL_CHECKBOXES: u64 = GRID_WIDTH as u64 * GRID_HEIGHT as u64;
 pub const CELL_SIZE: f64 = 4.0;
 
+// Chunk configuration
+pub const CHUNK_SIZE: u32 = 1_000; // 1000x1000 checkboxes per chunk
+pub const CHUNKS_X: u32 = 40; // GRID_WIDTH / CHUNK_SIZE
+pub const CHUNKS_Y: u32 = 25; // GRID_HEIGHT / CHUNK_SIZE
+pub const TOTAL_CHUNKS: u32 = CHUNKS_X * CHUNKS_Y; // 1000
+
 // Zoom bounds
-pub const MIN_SCALE: f64 = 0.5;
+pub const MIN_SCALE: f64 = 0.1; // Lower min to see more of the larger grid
 pub const MAX_SCALE: f64 = 10.0;
 
 // Colors

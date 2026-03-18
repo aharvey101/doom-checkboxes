@@ -12,7 +12,7 @@ pub fn Header(state: AppState) -> impl IntoView {
         let scale = state.scale.get();
         format!(
             "{} / {} checked | Zoom: {:.1}x | Shift+drag to pan, scroll to zoom",
-            format_number(checked),
+            format_number(checked as u64),
             format_number(TOTAL_CHECKBOXES),
             scale
         )
@@ -27,7 +27,7 @@ pub fn Header(state: AppState) -> impl IntoView {
     }
 }
 
-fn format_number(n: u32) -> String {
+fn format_number(n: u64) -> String {
     let s = n.to_string();
     let mut result = String::new();
     for (i, c) in s.chars().rev().enumerate() {
