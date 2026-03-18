@@ -234,6 +234,9 @@ pub fn toggle_checkbox(state: AppState, col: u32, row: u32) {
     let current_value = get_bit(&current_state, bit_index);
     let new_value = !current_value;
 
+    // Mark this cell as dirty for incremental render
+    state.mark_cell_dirty(bit_index as u32);
+
     // Optimistic update
     state.chunk_data.update(|data| {
         set_bit(data, bit_index, new_value);

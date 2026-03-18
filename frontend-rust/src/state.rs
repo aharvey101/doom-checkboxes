@@ -17,6 +17,17 @@ impl ConnectionStatus {
     }
 }
 
+/// Tracks what needs to be re-rendered
+#[derive(Clone, PartialEq)]
+pub enum RenderMode {
+    /// Full grid redraw needed (pan, zoom, initial load)
+    Full,
+    /// Only specific cells need redrawing
+    DirtyCells(Vec<u32>),
+    /// Nothing to render
+    None,
+}
+
 #[derive(Clone, Copy)]
 pub struct AppState {
     // Connection status
@@ -41,6 +52,9 @@ pub struct AppState {
 
     // Render throttling
     pub render_pending: RwSignal<bool>,
+
+    // Dirty tracking - which cells need redrawing
+    pub render_mode: RwSignal<RenderMode>,
 }
 
 impl AppState {
@@ -57,7 +71,37 @@ impl AppState {
             last_mouse_x: RwSignal::new(0.0),
             last_mouse_y: RwSignal::new(0.0),
             render_pending: RwSignal::new(false),
+            render_mode: RwSignal::new(RenderMode::Full),
         }
+    }
+
+    /// Mark a specific cell as dirty (needs redraw)
+    pub fn mark_cell_dirty(&self, bit_index: u32) {
+        self.render_mode.update(|mode| {
+            match mode {
+                RenderMode::Full => {
+                    // Already doing full redraw, no need to track
+                }
+                RenderMode::DirtyCells(cells) => {
+                    if !cells.contains(&bit_index) {
+                        cells.push(bit_index);
+                    }
+                }
+                RenderMode::None => {
+                    *mode = RenderMode::DirtyCells(vec![bit_index]);
+                }
+            }
+        });
+    }
+
+    /// Mark that a full redraw is needed
+    pub fn mark_full_redraw(&self) {
+        self.render_mode.set(RenderMode::Full);
+    }
+
+    /// Clear dirty state after render
+    pub fn clear_render_mode(&self) {
+        self.render_mode.set(RenderMode::None);
     }
 }
 

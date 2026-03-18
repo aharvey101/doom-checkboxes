@@ -8,7 +8,7 @@ use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, MouseEvent, WheelEven
 
 use crate::constants::*;
 use crate::db::toggle_checkbox;
-use crate::state::AppState;
+use crate::state::{AppState, RenderMode};
 use crate::utils::{canvas_to_grid, get_bit};
 
 #[component]
@@ -52,12 +52,31 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
     // Render effect - schedules rAF when signals change
     let request_render_effect = request_render.clone();
     Effect::new(move |_| {
-        let _ = state.chunk_data.get();
+        // Track render_mode changes (dirty cells)
+        let _ = state.render_mode.get();
+
+        request_render_effect();
+    });
+
+    // Effect for viewport changes - marks full redraw needed
+    Effect::new(move |_| {
         let _ = state.offset_x.get();
         let _ = state.offset_y.get();
         let _ = state.scale.get();
 
-        request_render_effect();
+        state.mark_full_redraw();
+    });
+
+    // Effect for data changes from server (not local optimistic updates)
+    // Note: local toggles use mark_cell_dirty, server updates trigger full redraw
+    Effect::new(move |prev: Option<Vec<u8>>| {
+        let data = state.chunk_data.get();
+        if prev.is_some() {
+            // Data changed from server, need full redraw
+            // (local changes already marked individual cells dirty)
+            state.mark_full_redraw();
+        }
+        data
     });
 
     // Window resize effect
@@ -153,31 +172,63 @@ fn render_grid(canvas: &HtmlCanvasElement, state: &AppState) {
     let scale = state.scale.get();
     let cell_size = CELL_SIZE * scale;
 
-    // Clear canvas
-    ctx.set_fill_style_str(COLOR_GRID);
-    ctx.fill_rect(0.0, 0.0, width, height);
+    // Get render mode and clear it
+    let render_mode = state.render_mode.get();
+    state.clear_render_mode();
 
-    // Calculate visible range
-    let start_col = ((-offset_x / cell_size).floor() as i32).max(0) as u32;
-    let start_row = ((-offset_y / cell_size).floor() as i32).max(0) as u32;
-    let end_col = (((width - offset_x) / cell_size).ceil() as u32).min(GRID_WIDTH);
-    let end_row = (((height - offset_y) / cell_size).ceil() as u32).min(GRID_HEIGHT);
+    match render_mode {
+        RenderMode::DirtyCells(cells) => {
+            // Incremental render - only redraw dirty cells
+            for bit_index in cells {
+                let col = bit_index % GRID_WIDTH;
+                let row = bit_index / GRID_WIDTH;
 
-    // Draw visible checkboxes
-    for row in start_row..end_row {
-        for col in start_col..end_col {
-            let bit_index = row * GRID_WIDTH + col;
-            let is_checked = get_bit(&chunk_data, bit_index);
+                let x = offset_x + (col as f64) * cell_size;
+                let y = offset_y + (row as f64) * cell_size;
 
-            let x = offset_x + (col as f64) * cell_size;
-            let y = offset_y + (row as f64) * cell_size;
+                // Skip if outside visible area
+                if x + cell_size < 0.0 || x > width || y + cell_size < 0.0 || y > height {
+                    continue;
+                }
 
-            ctx.set_fill_style_str(if is_checked {
-                COLOR_CHECKED
-            } else {
-                COLOR_UNCHECKED
-            });
-            ctx.fill_rect(x + 0.5, y + 0.5, cell_size - 1.0, cell_size - 1.0);
+                let is_checked = get_bit(&chunk_data, bit_index);
+                ctx.set_fill_style_str(if is_checked {
+                    COLOR_CHECKED
+                } else {
+                    COLOR_UNCHECKED
+                });
+                ctx.fill_rect(x + 0.5, y + 0.5, cell_size - 1.0, cell_size - 1.0);
+            }
+        }
+        RenderMode::Full | RenderMode::None => {
+            // Full redraw
+            // Clear canvas
+            ctx.set_fill_style_str(COLOR_GRID);
+            ctx.fill_rect(0.0, 0.0, width, height);
+
+            // Calculate visible range
+            let start_col = ((-offset_x / cell_size).floor() as i32).max(0) as u32;
+            let start_row = ((-offset_y / cell_size).floor() as i32).max(0) as u32;
+            let end_col = (((width - offset_x) / cell_size).ceil() as u32).min(GRID_WIDTH);
+            let end_row = (((height - offset_y) / cell_size).ceil() as u32).min(GRID_HEIGHT);
+
+            // Draw visible checkboxes
+            for row in start_row..end_row {
+                for col in start_col..end_col {
+                    let bit_index = row * GRID_WIDTH + col;
+                    let is_checked = get_bit(&chunk_data, bit_index);
+
+                    let x = offset_x + (col as f64) * cell_size;
+                    let y = offset_y + (row as f64) * cell_size;
+
+                    ctx.set_fill_style_str(if is_checked {
+                        COLOR_CHECKED
+                    } else {
+                        COLOR_UNCHECKED
+                    });
+                    ctx.fill_rect(x + 0.5, y + 0.5, cell_size - 1.0, cell_size - 1.0);
+                }
+            }
         }
     }
 }
