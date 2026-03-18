@@ -7,11 +7,13 @@
 //! - Updating Leptos signals when data arrives
 //! - Sending reducer calls for checkbox toggles
 
-use crate::constants::{GRID_WIDTH, TOTAL_CHECKBOXES};
+use crate::constants::{CHUNKS_X, CHUNK_SIZE, GRID_WIDTH};
 use crate::state::{AppState, ConnectionStatus};
+use crate::utils::{grid_to_chunk_id, grid_to_local, local_to_bit_offset};
 use crate::ws_client::{call_reducer, connect, subscribe, SharedClient, SpacetimeClient};
 use leptos::prelude::*;
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 /// CheckboxChunk row structure matching the backend schema
@@ -63,11 +65,6 @@ impl CheckboxChunk {
             version,
         })
     }
-}
-
-/// Count checked bits in the chunk data
-pub fn count_checked(data: &[u8]) -> u32 {
-    data.iter().map(|b| b.count_ones()).sum()
 }
 
 /// Get a bit value at the given index
@@ -174,7 +171,7 @@ pub fn init_connection(state: AppState) {
             state_sub.status_message.set("Connected".to_string());
         }));
 
-        // On chunk insert (also handles initial data from subscription)
+        // On chunk insert (initial data load)
         let state_insert = state;
         client_mut.on_chunk_insert(Box::new(move |row_bytes: &[u8]| {
             if let Some(chunk) = CheckboxChunk::from_bsatn(row_bytes) {
@@ -188,11 +185,21 @@ pub fn init_connection(state: AppState) {
                     .into(),
                 );
 
-                if chunk.chunk_id == 0 {
-                    let checked = count_checked(&chunk.state);
-                    state_insert.chunk_data.set(chunk.state);
-                    state_insert.checked_count.set(checked);
-                }
+                // Store chunk data
+                state_insert.loaded_chunks.update(|chunks| {
+                    chunks.insert(chunk.chunk_id, chunk.state);
+                });
+
+                // Mark as no longer loading, add to subscribed
+                state_insert.loading_chunks.update(|loading| {
+                    loading.remove(&chunk.chunk_id);
+                });
+                state_insert.subscribed_chunks.update(|subs| {
+                    subs.insert(chunk.chunk_id);
+                });
+
+                // Trigger render
+                state_insert.render_version.update(|v| *v += 1);
             }
         }));
 
@@ -200,23 +207,28 @@ pub fn init_connection(state: AppState) {
         let state_update = state;
         client_mut.on_chunk_update(Box::new(move |_old_bytes: &[u8], new_bytes: &[u8]| {
             if let Some(chunk) = CheckboxChunk::from_bsatn(new_bytes) {
-                if chunk.chunk_id == 0 {
-                    // Only update if data actually changed (skip our own optimistic updates)
-                    let current = state_update.chunk_data.get_untracked();
-                    if current != chunk.state {
-                        web_sys::console::log_1(
-                            &format!(
-                                "Chunk {} updated from server, version {}",
-                                chunk.chunk_id, chunk.version
-                            )
-                            .into(),
-                        );
-                        let checked = count_checked(&chunk.state);
-                        state_update.chunk_data.set(chunk.state);
-                        state_update.checked_count.set(checked);
-                        // Trigger full re-render for server updates
-                        state_update.render_version.update(|v| *v += 1);
+                // Only update if we have this chunk loaded
+                let should_update = state_update.loaded_chunks.with_untracked(|chunks| {
+                    if let Some(existing) = chunks.get(&chunk.chunk_id) {
+                        existing != &chunk.state
+                    } else {
+                        false
                     }
+                });
+
+                if should_update {
+                    web_sys::console::log_1(
+                        &format!(
+                            "Chunk {} updated from server, version {}",
+                            chunk.chunk_id, chunk.version
+                        )
+                        .into(),
+                    );
+                    state_update.loaded_chunks.update(|chunks| {
+                        chunks.insert(chunk.chunk_id, chunk.state);
+                    });
+                    // Trigger full re-render for server updates
+                    state_update.render_version.update(|v| *v += 1);
                 }
             }
         }));
@@ -229,33 +241,30 @@ pub fn init_connection(state: AppState) {
 /// Toggle a checkbox at the given grid position
 /// Returns the new checked state for immediate visual feedback
 pub fn toggle_checkbox(state: AppState, col: u32, row: u32) -> Option<bool> {
-    let bit_index = (row * GRID_WIDTH as u32 + col) as usize;
+    let chunk_id = grid_to_chunk_id(col, row);
+    let (local_col, local_row) = grid_to_local(col, row);
+    let bit_offset = local_to_bit_offset(local_col, local_row) as usize;
 
-    if bit_index >= TOTAL_CHECKBOXES as usize {
-        return None;
-    }
-
-    // Get current state and toggle
-    let current_state = state.chunk_data.get_untracked();
-    let current_value = get_bit(&current_state, bit_index);
+    // Get current value and toggle
+    let current_value = state.loaded_chunks.with_untracked(|chunks| {
+        chunks
+            .get(&chunk_id)
+            .map(|data| get_bit(data, bit_offset))
+            .unwrap_or(false)
+    });
     let new_value = !current_value;
 
     // Optimistic update
-    state.chunk_data.update(|data| {
-        set_bit(data, bit_index, new_value);
-    });
-    state.checked_count.update(|count| {
-        if new_value {
-            *count += 1;
-        } else {
-            *count = count.saturating_sub(1);
+    state.loaded_chunks.update(|chunks| {
+        if let Some(data) = chunks.get_mut(&chunk_id) {
+            set_bit(data, bit_offset, new_value);
         }
     });
 
     // Send to server
     if let Some(client) = get_client() {
         // Encode reducer arguments: (chunk_id: u32, bit_offset: u32, checked: bool)
-        let args = encode_update_checkbox_args(0, bit_index as u32, new_value);
+        let args = encode_update_checkbox_args(chunk_id, bit_offset as u32, new_value);
         call_reducer(&client, "update_checkbox", &args);
     }
 
@@ -278,6 +287,38 @@ fn encode_update_checkbox_args(chunk_id: u32, bit_offset: u32, checked: bool) ->
     buf.push(if checked { 1 } else { 0 });
 
     buf
+}
+
+/// Subscribe to a set of chunks
+pub fn subscribe_to_chunks(state: AppState, chunk_ids: HashSet<u32>) {
+    if let Some(client) = get_client() {
+        for chunk_id in chunk_ids {
+            // Skip if already subscribed or loading
+            if state
+                .subscribed_chunks
+                .with_untracked(|s| s.contains(&chunk_id))
+            {
+                continue;
+            }
+            if state
+                .loading_chunks
+                .with_untracked(|l| l.contains(&chunk_id))
+            {
+                continue;
+            }
+
+            // Mark as loading
+            state.loading_chunks.update(|loading| {
+                loading.insert(chunk_id);
+            });
+
+            // Subscribe via SpacetimeDB
+            let query = format!("SELECT * FROM checkbox_chunk WHERE chunk_id = {}", chunk_id);
+            subscribe(&client, &[&query]);
+
+            web_sys::console::log_1(&format!("Subscribing to chunk {}", chunk_id).into());
+        }
+    }
 }
 
 /// Get the SpacetimeDB URI based on environment
