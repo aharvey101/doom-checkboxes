@@ -27,7 +27,6 @@ Thumbs.db
 .netlify
 
 # Generated SDK (regenerate with npm run generate)
-generated/
 
 # SpacetimeDB logs
 *.log
@@ -38,3 +37,4 @@ playwright-report/
 
 # Built frontend bundle
 main.js
+# Generated SDK is now committed for Netlify builds
