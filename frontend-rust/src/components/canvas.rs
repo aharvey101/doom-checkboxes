@@ -1,5 +1,8 @@
 use leptos::html::Canvas;
 use leptos::prelude::*;
+use std::cell::RefCell;
+use std::rc::Rc;
+use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, MouseEvent, WheelEvent};
 
@@ -12,16 +15,49 @@ use crate::utils::{canvas_to_grid, get_bit};
 pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
     let canvas_ref = NodeRef::<Canvas>::new();
 
-    // Render effect - re-renders when signals change
+    // Store canvas_ref in Rc for use in rAF callback
+    let canvas_ref_for_raf = Rc::new(RefCell::new(canvas_ref));
+
+    // Request a render on the next animation frame (throttled)
+    let request_render = {
+        let canvas_ref_clone = canvas_ref_for_raf.clone();
+        move || {
+            // If render already pending, skip
+            if state.render_pending.get_untracked() {
+                return;
+            }
+            state.render_pending.set(true);
+
+            let canvas_ref_inner = *canvas_ref_clone.borrow();
+            let state_copy = state;
+
+            // Schedule render on next animation frame
+            let closure = Closure::once(Box::new(move || {
+                state_copy.render_pending.set(false);
+                if let Some(canvas) = canvas_ref_inner.get() {
+                    render_grid(&canvas, &state_copy);
+                }
+            }) as Box<dyn FnOnce()>);
+
+            web_sys::window()
+                .expect("no window")
+                .request_animation_frame(closure.as_ref().unchecked_ref())
+                .expect("failed to request animation frame");
+
+            // Prevent closure from being dropped
+            closure.forget();
+        }
+    };
+
+    // Render effect - schedules rAF when signals change
+    let request_render_effect = request_render.clone();
     Effect::new(move |_| {
         let _ = state.chunk_data.get();
         let _ = state.offset_x.get();
         let _ = state.offset_y.get();
         let _ = state.scale.get();
 
-        if let Some(canvas) = canvas_ref.get() {
-            render_grid(&canvas, &state);
-        }
+        request_render_effect();
     });
 
     // Window resize effect

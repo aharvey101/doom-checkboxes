@@ -38,6 +38,9 @@ pub struct AppState {
     pub is_dragging: RwSignal<bool>,
     pub last_mouse_x: RwSignal<f64>,
     pub last_mouse_y: RwSignal<f64>,
+
+    // Render throttling
+    pub render_pending: RwSignal<bool>,
 }
 
 impl AppState {
@@ -53,6 +56,7 @@ impl AppState {
             is_dragging: RwSignal::new(false),
             last_mouse_x: RwSignal::new(0.0),
             last_mouse_y: RwSignal::new(0.0),
+            render_pending: RwSignal::new(false),
         }
     }
 }
