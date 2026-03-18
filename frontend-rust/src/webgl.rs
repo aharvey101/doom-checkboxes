@@ -11,7 +11,12 @@ use web_sys::{
     WebGlUniformLocation,
 };
 
-use crate::constants::{COLOR_CHECKED, COLOR_GRID, COLOR_UNCHECKED, GRID_HEIGHT, GRID_WIDTH};
+use crate::constants::{
+    CELL_SIZE, CHUNKS_X, CHUNK_SIZE, COLOR_CHECKED, COLOR_GRID, COLOR_UNCHECKED, GRID_HEIGHT,
+    GRID_WIDTH,
+};
+use crate::utils::visible_chunk_range;
+use std::collections::HashMap;
 
 const VERTEX_SHADER: &str = r#"
     attribute vec2 a_position;
@@ -229,6 +234,41 @@ impl WebGLRenderer {
     pub fn render(
         &self,
         canvas: &HtmlCanvasElement,
+        loaded_chunks: &HashMap<u32, Vec<u8>>,
+        offset_x: f64,
+        offset_y: f64,
+        scale: f64,
+    ) {
+        let width = canvas.width() as f64;
+        let height = canvas.height() as f64;
+
+        self.gl.viewport(0, 0, width as i32, height as i32);
+
+        // Clear with grid background
+        let (bg_r, bg_g, bg_b) = parse_hex_color(COLOR_GRID);
+        self.gl.clear_color(bg_r, bg_g, bg_b, 1.0);
+        self.gl.clear(GL::COLOR_BUFFER_BIT);
+
+        // Calculate visible chunk range
+        let (min_cx, min_cy, max_cx, max_cy) =
+            visible_chunk_range(offset_x, offset_y, scale, width, height);
+
+        // Render each loaded chunk in visible range
+        for cy in min_cy..=max_cy {
+            for cx in min_cx..=max_cx {
+                let chunk_id = cx + cy * CHUNKS_X;
+                if let Some(chunk_data) = loaded_chunks.get(&chunk_id) {
+                    self.render_chunk(canvas, chunk_id, chunk_data, offset_x, offset_y, scale);
+                }
+                // Unloaded chunks just show background (already cleared)
+            }
+        }
+    }
+
+    fn render_chunk(
+        &self,
+        canvas: &HtmlCanvasElement,
+        chunk_id: u32,
         chunk_data: &[u8],
         offset_x: f64,
         offset_y: f64,
@@ -237,17 +277,20 @@ impl WebGLRenderer {
         let width = canvas.width() as f32;
         let height = canvas.height() as f32;
 
-        self.gl.viewport(0, 0, width as i32, height as i32);
+        // Calculate chunk's world position
+        let chunk_x = chunk_id % CHUNKS_X;
+        let chunk_y = chunk_id / CHUNKS_X;
+        let chunk_offset_x = offset_x + (chunk_x * CHUNK_SIZE) as f64 * CELL_SIZE * scale;
+        let chunk_offset_y = offset_y + (chunk_y * CHUNK_SIZE) as f64 * CELL_SIZE * scale;
 
-        // Update state texture
+        // Upload chunk texture
         self.gl
             .bind_texture(GL::TEXTURE_2D, Some(&self.state_texture));
 
         // Convert chunk_data to texture (500x250, LUMINANCE format)
         // Each byte becomes one pixel's luminance value
-        let tex_data = chunk_data;
         unsafe {
-            let tex_array = js_sys::Uint8Array::view(tex_data);
+            let tex_array = js_sys::Uint8Array::view(chunk_data);
             self.gl
                 .tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_array_buffer_view(
                     GL::TEXTURE_2D,
@@ -263,10 +306,13 @@ impl WebGLRenderer {
                 .expect("Failed to upload texture");
         }
 
-        // Update uniforms
+        // Update uniforms for this chunk's position
         self.gl.uniform2f(Some(&self.u_resolution), width, height);
-        self.gl
-            .uniform2f(Some(&self.u_offset), offset_x as f32, offset_y as f32);
+        self.gl.uniform2f(
+            Some(&self.u_offset),
+            chunk_offset_x as f32,
+            chunk_offset_y as f32,
+        );
         self.gl.uniform1f(Some(&self.u_scale), scale as f32);
 
         // Draw
@@ -289,9 +335,9 @@ impl WebGLRenderer {
         offset_y: f64,
         scale: f64,
     ) {
-        let cell_size = crate::constants::CELL_SIZE * scale;
+        let cell_size = CELL_SIZE * scale;
 
-        // Calculate cell position on screen
+        // Calculate cell position on screen (global coordinates)
         let x = offset_x + (col as f64) * cell_size;
         let y = offset_y + (row as f64) * cell_size;
 
@@ -309,8 +355,8 @@ impl WebGLRenderer {
         // WebGL scissor Y is from bottom, need to flip
         let scissor_x = (x + 0.5) as i32;
         let scissor_y = (height - y - cell_size + 0.5) as i32;
-        let scissor_w = (cell_size - 1.0) as i32;
-        let scissor_h = (cell_size - 1.0) as i32;
+        let scissor_w = (cell_size - 1.0).max(1.0) as i32;
+        let scissor_h = (cell_size - 1.0).max(1.0) as i32;
 
         self.gl.scissor(scissor_x, scissor_y, scissor_w, scissor_h);
 
