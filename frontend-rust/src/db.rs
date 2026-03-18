@@ -200,18 +200,21 @@ pub fn init_connection(state: AppState) {
         let state_update = state;
         client_mut.on_chunk_update(Box::new(move |_old_bytes: &[u8], new_bytes: &[u8]| {
             if let Some(chunk) = CheckboxChunk::from_bsatn(new_bytes) {
-                web_sys::console::log_1(
-                    &format!(
-                        "Chunk {} updated, version {}",
-                        chunk.chunk_id, chunk.version
-                    )
-                    .into(),
-                );
-
                 if chunk.chunk_id == 0 {
-                    let checked = count_checked(&chunk.state);
-                    state_update.chunk_data.set(chunk.state);
-                    state_update.checked_count.set(checked);
+                    // Only update if data actually changed (skip our own optimistic updates)
+                    let current = state_update.chunk_data.get_untracked();
+                    if current != chunk.state {
+                        web_sys::console::log_1(
+                            &format!(
+                                "Chunk {} updated from server, version {}",
+                                chunk.chunk_id, chunk.version
+                            )
+                            .into(),
+                        );
+                        let checked = count_checked(&chunk.state);
+                        state_update.chunk_data.set(chunk.state);
+                        state_update.checked_count.set(checked);
+                    }
                 }
             }
         }));
