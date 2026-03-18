@@ -175,8 +175,8 @@ function updateStats() {
 
 // Update from chunk data
 function updateFromChunk(state: Uint8Array) {
-  chunkData = state;
-  checkedCount = countChecked(state);
+  chunkData = new Uint8Array(state);
+  checkedCount = countChecked(chunkData);
   updateStats();
   render();
 }
@@ -199,6 +199,22 @@ async function connect() {
         console.log("Connected with identity:", identity.toHexString());
         setStatus("Connected - subscribing...", "connecting");
 
+        // Register table listeners BEFORE subscribing
+        connection.db.checkbox_chunk.onInsert((_ctx, row) => {
+          console.log("Chunk inserted:", row.chunkId);
+          if (row.chunkId === 0) {
+            updateFromChunk(row.state);
+          }
+        });
+
+        connection.db.checkbox_chunk.onUpdate((_ctx, _oldRow, newRow) => {
+          console.log("Chunk updated:", newRow.chunkId, "version:", newRow.version);
+          if (newRow.chunkId === 0) {
+            updateFromChunk(newRow.state);
+          }
+        });
+
+        // Now subscribe
         connection
           .subscriptionBuilder()
           .onApplied(() => {
@@ -226,18 +242,6 @@ async function connect() {
         setStatus("Connection failed", "error");
       })
       .build();
-
-    conn.db.checkbox_chunk.onInsert((_ctx, row) => {
-      if (row.chunkId === 0) {
-        updateFromChunk(row.state);
-      }
-    });
-
-    conn.db.checkbox_chunk.onUpdate((_ctx, _oldRow, newRow) => {
-      if (newRow.chunkId === 0) {
-        updateFromChunk(newRow.state);
-      }
-    });
   } catch (error) {
     console.error("Failed to connect:", error);
     setStatus("Connection failed: " + String(error), "error");
