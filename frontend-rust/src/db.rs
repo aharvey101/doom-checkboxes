@@ -7,6 +7,7 @@
 //! - Updating Leptos signals when data arrives
 //! - Sending reducer calls for checkbox toggles
 
+use crate::constants::CHUNK_DATA_SIZE;
 use crate::state::{AppState, ConnectionStatus};
 use crate::utils::{grid_to_chunk_id, grid_to_local, local_to_bit_offset};
 use crate::ws_client::{call_reducer, connect, subscribe, SharedClient, SpacetimeClient};
@@ -244,6 +245,13 @@ pub fn toggle_checkbox(state: AppState, col: u32, row: u32) -> Option<bool> {
     let (local_col, local_row) = grid_to_local(col, row);
     let bit_offset = local_to_bit_offset(local_col, local_row) as usize;
 
+    // Ensure chunk exists locally (create empty chunk if needed)
+    state.loaded_chunks.update(|chunks| {
+        chunks
+            .entry(chunk_id)
+            .or_insert_with(|| vec![0u8; CHUNK_DATA_SIZE]);
+    });
+
     // Get current value and toggle
     let current_value = state.loaded_chunks.with_untracked(|chunks| {
         chunks
@@ -268,6 +276,49 @@ pub fn toggle_checkbox(state: AppState, col: u32, row: u32) -> Option<bool> {
     }
 
     Some(new_value)
+}
+
+/// Set a checkbox to checked at the given grid position (for drag-to-fill)
+/// Returns true if the checkbox was changed (was unchecked), false if already checked
+pub fn set_checkbox_checked(state: AppState, col: u32, row: u32) -> Option<bool> {
+    let chunk_id = grid_to_chunk_id(col, row);
+    let (local_col, local_row) = grid_to_local(col, row);
+    let bit_offset = local_to_bit_offset(local_col, local_row) as usize;
+
+    // Ensure chunk exists locally (create empty chunk if needed)
+    state.loaded_chunks.update(|chunks| {
+        chunks
+            .entry(chunk_id)
+            .or_insert_with(|| vec![0u8; CHUNK_DATA_SIZE]);
+    });
+
+    // Get current value
+    let current_value = state.loaded_chunks.with_untracked(|chunks| {
+        chunks
+            .get(&chunk_id)
+            .map(|data| get_bit(data, bit_offset))
+            .unwrap_or(false)
+    });
+
+    // Only update if not already checked
+    if current_value {
+        return Some(false); // Already checked, no change
+    }
+
+    // Optimistic update
+    state.loaded_chunks.update(|chunks| {
+        if let Some(data) = chunks.get_mut(&chunk_id) {
+            set_bit(data, bit_offset, true);
+        }
+    });
+
+    // Send to server
+    if let Some(client) = get_client() {
+        let args = encode_update_checkbox_args(chunk_id, bit_offset as u32, true);
+        call_reducer(&client, "update_checkbox", &args);
+    }
+
+    Some(true) // Changed from unchecked to checked
 }
 
 /// Encode arguments for update_checkbox reducer

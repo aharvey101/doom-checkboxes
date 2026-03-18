@@ -7,7 +7,7 @@ use wasm_bindgen::JsCast;
 use web_sys::{MouseEvent, WheelEvent};
 
 use crate::constants::*;
-use crate::db::{subscribe_to_chunks, toggle_checkbox};
+use crate::db::{set_checkbox_checked, subscribe_to_chunks, toggle_checkbox};
 use crate::state::AppState;
 use crate::utils::{canvas_to_grid, visible_chunk_ids};
 use crate::webgl::WebGLRenderer;
@@ -139,6 +139,10 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
     // Click handler - with immediate visual feedback
     let renderer_for_click = renderer.clone();
     let on_click = move |e: MouseEvent| {
+        // Don't handle click if we were drawing (mouseup already handled it)
+        if state.is_drawing.get_untracked() {
+            return;
+        }
         if e.shift_key() {
             return; // Shift+click is for panning
         }
@@ -167,32 +171,87 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
         }
     };
 
-    // Pan handlers
+    // Pan handlers (shift+drag) and drawing handlers (drag without shift)
+    let renderer_for_draw = renderer.clone();
     let on_mousedown = move |e: MouseEvent| {
-        if e.button() == 0 && e.shift_key() {
-            state.is_dragging.set(true);
-            state.last_mouse_x.set(e.client_x() as f64);
-            state.last_mouse_y.set(e.client_y() as f64);
+        if e.button() == 0 {
+            if e.shift_key() {
+                // Shift+drag: pan mode
+                state.is_dragging.set(true);
+                state.last_mouse_x.set(e.client_x() as f64);
+                state.last_mouse_y.set(e.client_y() as f64);
+            } else {
+                // Regular drag: drawing mode
+                state.is_drawing.set(true);
+
+                // Fill the first checkbox immediately
+                let Some(canvas) = canvas_ref.get() else {
+                    return;
+                };
+                let rect = canvas.get_bounding_client_rect();
+                let x = e.client_x() as f64 - rect.left();
+                let y = e.client_y() as f64 - rect.top();
+
+                let offset_x = state.offset_x.get_untracked();
+                let offset_y = state.offset_y.get_untracked();
+                let scale = state.scale.get_untracked();
+
+                if let Some((col, row)) = canvas_to_grid(x, y, offset_x, offset_y, scale) {
+                    if let Some(true) = set_checkbox_checked(state, col, row) {
+                        // Render immediately
+                        if let Some(ref r) = *renderer_for_draw.borrow() {
+                            r.render_cell_immediate(
+                                &canvas, col, row, true, offset_x, offset_y, scale,
+                            );
+                        }
+                    }
+                }
+            }
         }
     };
 
+    let renderer_for_move = renderer.clone();
     let on_mousemove = move |e: MouseEvent| {
         if state.is_dragging.get() {
+            // Pan mode
             let dx = e.client_x() as f64 - state.last_mouse_x.get();
             let dy = e.client_y() as f64 - state.last_mouse_y.get();
             state.offset_x.update(|x| *x += dx);
             state.offset_y.update(|y| *y += dy);
             state.last_mouse_x.set(e.client_x() as f64);
             state.last_mouse_y.set(e.client_y() as f64);
+        } else if state.is_drawing.get() {
+            // Drawing mode - fill checkboxes under pointer
+            let Some(canvas) = canvas_ref.get() else {
+                return;
+            };
+            let rect = canvas.get_bounding_client_rect();
+            let x = e.client_x() as f64 - rect.left();
+            let y = e.client_y() as f64 - rect.top();
+
+            let offset_x = state.offset_x.get_untracked();
+            let offset_y = state.offset_y.get_untracked();
+            let scale = state.scale.get_untracked();
+
+            if let Some((col, row)) = canvas_to_grid(x, y, offset_x, offset_y, scale) {
+                if let Some(true) = set_checkbox_checked(state, col, row) {
+                    // Render immediately
+                    if let Some(ref r) = *renderer_for_move.borrow() {
+                        r.render_cell_immediate(&canvas, col, row, true, offset_x, offset_y, scale);
+                    }
+                }
+            }
         }
     };
 
     let on_mouseup = move |_: MouseEvent| {
         state.is_dragging.set(false);
+        state.is_drawing.set(false);
     };
 
     let on_mouseleave = move |_: MouseEvent| {
         state.is_dragging.set(false);
+        state.is_drawing.set(false);
     };
 
     // Zoom handler
