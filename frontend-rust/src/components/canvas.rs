@@ -107,12 +107,35 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
         }
     });
 
-    // Click handler
+    // Click handler - with immediate visual feedback
+    let renderer_for_click = renderer.clone();
     let on_click = move |e: MouseEvent| {
         if e.shift_key() {
             return; // Shift+click is for panning
         }
-        handle_click(e, &state, &canvas_ref);
+
+        let Some(canvas) = canvas_ref.get() else {
+            return;
+        };
+        let rect = canvas.get_bounding_client_rect();
+        let x = e.client_x() as f64 - rect.left();
+        let y = e.client_y() as f64 - rect.top();
+
+        let offset_x = state.offset_x.get_untracked();
+        let offset_y = state.offset_y.get_untracked();
+        let scale = state.scale.get_untracked();
+
+        if let Some((col, row)) = canvas_to_grid(x, y, offset_x, offset_y, scale) {
+            // Toggle and get new value
+            if let Some(new_value) = toggle_checkbox(state, col, row) {
+                // Immediate visual feedback - render just this cell
+                if let Some(ref r) = *renderer_for_click.borrow() {
+                    r.render_cell_immediate(
+                        &canvas, col, row, new_value, offset_x, offset_y, scale,
+                    );
+                }
+            }
+        }
     };
 
     // Pan handlers
@@ -168,24 +191,6 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
             on:wheel=on_wheel
             style=cursor_style
         />
-    }
-}
-
-fn handle_click(e: MouseEvent, state: &AppState, canvas_ref: &NodeRef<Canvas>) {
-    let Some(canvas) = canvas_ref.get() else {
-        return;
-    };
-    let rect = canvas.get_bounding_client_rect();
-    let x = e.client_x() as f64 - rect.left();
-    let y = e.client_y() as f64 - rect.top();
-
-    let offset_x = state.offset_x.get();
-    let offset_y = state.offset_y.get();
-    let scale = state.scale.get();
-
-    if let Some((col, row)) = canvas_to_grid(x, y, offset_x, offset_y, scale) {
-        // Toggle checkbox with optimistic update + server sync
-        toggle_checkbox(*state, col, row);
     }
 }
 

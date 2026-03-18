@@ -268,6 +268,56 @@ impl WebGLRenderer {
     pub fn resize(&self, width: u32, height: u32) {
         self.gl.viewport(0, 0, width as i32, height as i32);
     }
+
+    /// Immediately render a single cell without texture upload
+    /// Used for instant visual feedback on click
+    pub fn render_cell_immediate(
+        &self,
+        canvas: &HtmlCanvasElement,
+        col: u32,
+        row: u32,
+        is_checked: bool,
+        offset_x: f64,
+        offset_y: f64,
+        scale: f64,
+    ) {
+        let cell_size = crate::constants::CELL_SIZE * scale;
+
+        // Calculate cell position on screen
+        let x = offset_x + (col as f64) * cell_size;
+        let y = offset_y + (row as f64) * cell_size;
+
+        let width = canvas.width() as f64;
+        let height = canvas.height() as f64;
+
+        // Skip if outside visible area
+        if x + cell_size < 0.0 || x > width || y + cell_size < 0.0 || y > height {
+            return;
+        }
+
+        // Use scissor test to only draw in the cell area
+        self.gl.enable(GL::SCISSOR_TEST);
+
+        // WebGL scissor Y is from bottom, need to flip
+        let scissor_x = (x + 0.5) as i32;
+        let scissor_y = (height - y - cell_size + 0.5) as i32;
+        let scissor_w = (cell_size - 1.0) as i32;
+        let scissor_h = (cell_size - 1.0) as i32;
+
+        self.gl.scissor(scissor_x, scissor_y, scissor_w, scissor_h);
+
+        // Clear with the cell color
+        let (r, g, b) = if is_checked {
+            parse_hex_color(COLOR_CHECKED)
+        } else {
+            parse_hex_color(COLOR_UNCHECKED)
+        };
+
+        self.gl.clear_color(r, g, b, 1.0);
+        self.gl.clear(GL::COLOR_BUFFER_BIT);
+
+        self.gl.disable(GL::SCISSOR_TEST);
+    }
 }
 
 fn compile_shader(gl: &GL, shader_type: u32, source: &str) -> Result<WebGlShader, String> {

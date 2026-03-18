@@ -222,11 +222,12 @@ pub fn init_connection(state: AppState) {
 }
 
 /// Toggle a checkbox at the given grid position
-pub fn toggle_checkbox(state: AppState, col: u32, row: u32) {
+/// Returns the new checked state for immediate visual feedback
+pub fn toggle_checkbox(state: AppState, col: u32, row: u32) -> Option<bool> {
     let bit_index = (row * GRID_WIDTH as u32 + col) as usize;
 
     if bit_index >= TOTAL_CHECKBOXES as usize {
-        return;
+        return None;
     }
 
     // Get current state and toggle
@@ -252,6 +253,8 @@ pub fn toggle_checkbox(state: AppState, col: u32, row: u32) {
         let args = encode_update_checkbox_args(0, bit_index as u32, new_value);
         call_reducer(&client, "update_checkbox", &args);
     }
+
+    Some(new_value)
 }
 
 /// Encode arguments for update_checkbox reducer
