@@ -86,13 +86,8 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
         // Track server updates (incremented when server sends new data)
         let _ = state.render_version.get();
 
-        // Skip render if we just did an immediate cell render
-        // (the skip flag is set by click handler after render_cell_immediate)
-        if state.skip_next_render.get_untracked() {
-            state.skip_next_render.set(false);
-            return;
-        }
-
+        // No skip logic needed - we don't track chunk_data, so clicks don't trigger this Effect.
+        // Only viewport changes and server updates (render_version) trigger renders.
         request_render_effect();
     });
 
@@ -135,9 +130,6 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
         let scale = state.scale.get_untracked();
 
         if let Some((col, row)) = canvas_to_grid(x, y, offset_x, offset_y, scale) {
-            // Skip the next full render since we'll render this cell immediately
-            state.skip_next_render.set(true);
-
             // Toggle and get new value
             if let Some(new_value) = toggle_checkbox(state, col, row) {
                 // Immediate visual feedback - render just this cell
