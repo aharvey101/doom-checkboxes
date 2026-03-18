@@ -42,6 +42,18 @@ function getBit(data: Uint8Array, bitIndex: number): boolean {
   return byteIdx < data.length ? ((data[byteIdx] >> bitIdx) & 1) === 1 : false;
 }
 
+function setBit(data: Uint8Array, bitIndex: number, value: boolean): void {
+  const byteIdx = Math.floor(bitIndex / 8);
+  const bitIdx = bitIndex % 8;
+  if (byteIdx < data.length) {
+    if (value) {
+      data[byteIdx] |= (1 << bitIdx);
+    } else {
+      data[byteIdx] &= ~(1 << bitIdx);
+    }
+  }
+}
+
 function countChecked(data: Uint8Array): number {
   let count = 0;
   for (let i = 0; i < TOTAL_CHECKBOXES; i++) {
@@ -105,11 +117,19 @@ function handleClick(e: MouseEvent) {
   if (grid) {
     const bitIndex = grid.row * GRID_WIDTH + grid.col;
     const currentState = getBit(chunkData, bitIndex);
+    const newState = !currentState;
     
+    // Optimistic update - apply immediately for instant feedback
+    setBit(chunkData, bitIndex, newState);
+    checkedCount += newState ? 1 : -1;
+    updateStats();
+    render();
+    
+    // Send to server (server will broadcast to other clients)
     conn.reducers.updateCheckbox({
       chunkId: 0,
       bitOffset: bitIndex,
-      checked: !currentState,
+      checked: newState,
     });
   }
 }
