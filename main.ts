@@ -1,7 +1,8 @@
-import { DbConnection, SubscriptionBuilder } from "./generated";
+import { DbConnection } from "./generated";
 
-// Configuration
-const SPACETIMEDB_URI = "ws://127.0.0.1:3000";
+// Configuration - auto-detect production vs local
+const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+const SPACETIMEDB_URI = isLocal ? "ws://127.0.0.1:3000" : "wss://maincloud.spacetimedb.com";
 const DATABASE_NAME = "checkboxes";
 const CHECKBOX_COUNT = 500; // 50x10 grid for demo
 
@@ -74,7 +75,7 @@ function setStatus(text: string, type: "connecting" | "connected" | "error") {
 
 // Connect to SpacetimeDB
 async function connect() {
-  setStatus("Connecting...", "connecting");
+  setStatus(`Connecting to ${isLocal ? "local" : "production"}...`, "connecting");
   createCheckboxGrid();
 
   try {
@@ -97,7 +98,7 @@ async function connect() {
               updateCheckboxesFromChunk(chunk.chunkId, chunk.state);
             }
           })
-          .onError((ctx, error) => {
+          .onError((_ctx, error) => {
             console.error("Subscription error:", error);
             setStatus("Subscription error", "error");
           })
@@ -114,12 +115,12 @@ async function connect() {
       .build();
 
     // Listen for table updates
-    conn.db.checkbox_chunk.onInsert((ctx, row) => {
+    conn.db.checkbox_chunk.onInsert((_ctx, row) => {
       console.log("Chunk inserted:", row.chunkId);
       updateCheckboxesFromChunk(row.chunkId, row.state);
     });
 
-    conn.db.checkbox_chunk.onUpdate((ctx, oldRow, newRow) => {
+    conn.db.checkbox_chunk.onUpdate((_ctx, _oldRow, newRow) => {
       updateCheckboxesFromChunk(newRow.chunkId, newRow.state);
     });
   } catch (error) {

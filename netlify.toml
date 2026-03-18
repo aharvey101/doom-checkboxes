@@ -1,0 +1,8 @@
+[build]
+  command = "npm run build:frontend"
+  publish = "."
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
