@@ -14,6 +14,13 @@ pub fn Header(state: AppState) -> impl IntoView {
         format!("Zoom: {:.1}x | Shift+drag to pan, scroll to zoom", scale)
     };
 
+    // Go home button handler - reset to origin (0,0)
+    let go_home = move |_| {
+        state.offset_x.set(0.0);
+        state.offset_y.set(0.0);
+        state.scale.set(1.0);
+    };
+
     // Copy link button handler
     let copy_link = move |_| {
         let offset_x = state.offset_x.get_untracked();
@@ -79,6 +86,7 @@ pub fn Header(state: AppState) -> impl IntoView {
             <h1>"Infinite Checkboxes"</h1>
             <div class=status_class>{status_text}</div>
             <div class="stats">{stats_text}</div>
+            <button class="home-btn" on:click=go_home>"Go Home"</button>
             <button class="copy-link-btn" on:click=copy_link>"Copy Link"</button>
         </div>
     }
