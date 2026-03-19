@@ -1,6 +1,14 @@
 // SpacetimeDB backend for collaborative checkboxes - v2.0
 
-use spacetimedb::{reducer, table, ReducerContext, Table};
+use spacetimedb::{reducer, table, ReducerContext, SpacetimeType, Table};
+
+/// A single checkbox update for batch operations
+#[derive(SpacetimeType)]
+pub struct CheckboxUpdate {
+    pub chunk_id: u32,
+    pub bit_offset: u32,
+    pub checked: bool,
+}
 
 /// Stores checkbox state in chunks of 1 million checkboxes each  
 /// Each chunk = 125KB (1,000,000 bits / 8 bytes per bit)
@@ -48,32 +56,19 @@ pub fn update_checkbox(ctx: &ReducerContext, chunk_id: u32, bit_offset: u32, che
 }
 
 /// Batch update multiple checkboxes at once
-/// Each update is encoded as: chunk_id (u32) + bit_offset (u32) + checked (u8)
-/// Total 9 bytes per update
+/// Each update contains chunk_id, bit_offset, and checked state
 #[reducer]
-pub fn batch_update_checkboxes(ctx: &ReducerContext, updates: Vec<u8>) {
+pub fn batch_update_checkboxes(ctx: &ReducerContext, updates: Vec<CheckboxUpdate>) {
     use std::collections::HashMap;
 
-    // Parse updates and group by chunk_id
+    // Group updates by chunk_id
     let mut chunk_updates: HashMap<u32, Vec<(u32, bool)>> = HashMap::new();
 
-    let mut i = 0;
-    while i + 9 <= updates.len() {
-        let chunk_id =
-            u32::from_le_bytes([updates[i], updates[i + 1], updates[i + 2], updates[i + 3]]);
-        let bit_offset = u32::from_le_bytes([
-            updates[i + 4],
-            updates[i + 5],
-            updates[i + 6],
-            updates[i + 7],
-        ]);
-        let checked = updates[i + 8] != 0;
-
+    for update in updates {
         chunk_updates
-            .entry(chunk_id)
+            .entry(update.chunk_id)
             .or_default()
-            .push((bit_offset, checked));
-        i += 9;
+            .push((update.bit_offset, update.checked));
     }
 
     // Apply all updates per chunk

@@ -14,6 +14,40 @@ use crate::state::AppState;
 use crate::utils::{canvas_to_grid, visible_chunk_ids};
 use crate::webgl::WebGLRenderer;
 
+/// Bresenham's line algorithm - returns all grid cells between two points (inclusive)
+fn line_cells(x0: u32, y0: u32, x1: u32, y1: u32) -> Vec<(u32, u32)> {
+    let mut cells = Vec::new();
+
+    let dx = (x1 as i64 - x0 as i64).abs();
+    let dy = (y1 as i64 - y0 as i64).abs();
+    let sx: i64 = if x0 < x1 { 1 } else { -1 };
+    let sy: i64 = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx - dy;
+
+    let mut x = x0 as i64;
+    let mut y = y0 as i64;
+
+    loop {
+        cells.push((x as u32, y as u32));
+
+        if x == x1 as i64 && y == y1 as i64 {
+            break;
+        }
+
+        let e2 = 2 * err;
+        if e2 > -dy {
+            err -= dy;
+            x += sx;
+        }
+        if e2 < dx {
+            err += dx;
+            y += sy;
+        }
+    }
+
+    cells
+}
+
 #[component]
 pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
     let canvas_ref = NodeRef::<Canvas>::new();
@@ -199,6 +233,10 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
                 let scale = state.scale.get_untracked();
 
                 if let Some((col, row)) = canvas_to_grid(x, y, offset_x, offset_y, scale) {
+                    // Track the starting position for line interpolation
+                    state.last_draw_col.set(Some(col));
+                    state.last_draw_row.set(Some(row));
+
                     if let Some(true) = set_checkbox_checked(state, col, row) {
                         // Render immediately
                         if let Some(ref r) = *renderer_for_draw.borrow() {
@@ -223,7 +261,7 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
             state.last_mouse_x.set(e.client_x() as f64);
             state.last_mouse_y.set(e.client_y() as f64);
         } else if state.is_drawing.get() {
-            // Drawing mode - fill checkboxes under pointer
+            // Drawing mode - fill checkboxes along line from last position
             let Some(canvas) = canvas_ref.get() else {
                 return;
             };
@@ -236,12 +274,31 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
             let scale = state.scale.get_untracked();
 
             if let Some((col, row)) = canvas_to_grid(x, y, offset_x, offset_y, scale) {
-                if let Some(true) = set_checkbox_checked(state, col, row) {
-                    // Render immediately
-                    if let Some(ref r) = *renderer_for_move.borrow() {
-                        r.render_cell_immediate(&canvas, col, row, true, offset_x, offset_y, scale);
+                // Get last position for line interpolation
+                let last_col = state.last_draw_col.get_untracked();
+                let last_row = state.last_draw_row.get_untracked();
+
+                // Get all cells along the line from last position to current
+                let cells = match (last_col, last_row) {
+                    (Some(lc), Some(lr)) if lc != col || lr != row => line_cells(lc, lr, col, row),
+                    _ => vec![(col, row)],
+                };
+
+                // Fill all cells along the line
+                for (c, r) in cells {
+                    if let Some(true) = set_checkbox_checked(state, c, r) {
+                        // Render immediately
+                        if let Some(ref renderer) = *renderer_for_move.borrow() {
+                            renderer.render_cell_immediate(
+                                &canvas, c, r, true, offset_x, offset_y, scale,
+                            );
+                        }
                     }
                 }
+
+                // Update last position
+                state.last_draw_col.set(Some(col));
+                state.last_draw_row.set(Some(row));
             }
         }
     };
@@ -253,6 +310,8 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
         }
         state.is_dragging.set(false);
         state.is_drawing.set(false);
+        state.last_draw_col.set(None);
+        state.last_draw_row.set(None);
     };
 
     let on_mouseleave = move |_: MouseEvent| {
@@ -262,6 +321,8 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
         }
         state.is_dragging.set(false);
         state.is_drawing.set(false);
+        state.last_draw_col.set(None);
+        state.last_draw_row.set(None);
     };
 
     // Zoom handler

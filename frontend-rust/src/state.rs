@@ -44,6 +44,8 @@ pub struct AppState {
 
     // Drawing state (for drag-to-fill)
     pub is_drawing: RwSignal<bool>,
+    pub last_draw_col: RwSignal<Option<u32>>,
+    pub last_draw_row: RwSignal<Option<u32>>,
 
     // Pending updates for batching (chunk_id, bit_offset, checked)
     pub pending_updates: RwSignal<Vec<PendingUpdate>>,
@@ -73,6 +75,8 @@ impl AppState {
             last_mouse_x: RwSignal::new(0.0),
             last_mouse_y: RwSignal::new(0.0),
             is_drawing: RwSignal::new(false),
+            last_draw_col: RwSignal::new(None),
+            last_draw_row: RwSignal::new(None),
             pending_updates: RwSignal::new(Vec::new()),
             render_pending: RwSignal::new(false),
             skip_next_render: RwSignal::new(false),
