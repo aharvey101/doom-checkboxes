@@ -47,6 +47,58 @@ pub fn update_checkbox(ctx: &ReducerContext, chunk_id: u32, bit_offset: u32, che
     ctx.db.checkbox_chunk().insert(new_chunk);
 }
 
+/// Batch update multiple checkboxes at once
+/// Each update is encoded as: chunk_id (u32) + bit_offset (u32) + checked (u8)
+/// Total 9 bytes per update
+#[reducer]
+pub fn batch_update_checkboxes(ctx: &ReducerContext, updates: Vec<u8>) {
+    use std::collections::HashMap;
+
+    // Parse updates and group by chunk_id
+    let mut chunk_updates: HashMap<u32, Vec<(u32, bool)>> = HashMap::new();
+
+    let mut i = 0;
+    while i + 9 <= updates.len() {
+        let chunk_id =
+            u32::from_le_bytes([updates[i], updates[i + 1], updates[i + 2], updates[i + 3]]);
+        let bit_offset = u32::from_le_bytes([
+            updates[i + 4],
+            updates[i + 5],
+            updates[i + 6],
+            updates[i + 7],
+        ]);
+        let checked = updates[i + 8] != 0;
+
+        chunk_updates
+            .entry(chunk_id)
+            .or_default()
+            .push((bit_offset, checked));
+        i += 9;
+    }
+
+    // Apply all updates per chunk
+    for (chunk_id, updates) in chunk_updates {
+        if let Some(mut row) = ctx.db.checkbox_chunk().chunk_id().find(chunk_id) {
+            for (bit_offset, checked) in updates {
+                set_bit(&mut row.state, bit_offset as usize, checked);
+            }
+            row.version += 1;
+            ctx.db.checkbox_chunk().chunk_id().update(row);
+        } else {
+            // Create new chunk
+            let mut new_chunk = CheckboxChunk {
+                chunk_id,
+                state: vec![0u8; 125_000],
+                version: 0,
+            };
+            for (bit_offset, checked) in updates {
+                set_bit(&mut new_chunk.state, bit_offset as usize, checked);
+            }
+            ctx.db.checkbox_chunk().insert(new_chunk);
+        }
+    }
+}
+
 /// Add a new chunk for expanding to additional checkboxes
 #[reducer]
 pub fn add_chunk(ctx: &ReducerContext, chunk_id: u32) {

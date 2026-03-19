@@ -280,6 +280,7 @@ pub fn toggle_checkbox(state: AppState, col: u32, row: u32) -> Option<bool> {
 
 /// Set a checkbox to checked at the given grid position (for drag-to-fill)
 /// Returns true if the checkbox was changed (was unchecked), false if already checked
+/// Note: This queues the update for batching instead of sending immediately
 pub fn set_checkbox_checked(state: AppState, col: u32, row: u32) -> Option<bool> {
     let chunk_id = grid_to_chunk_id(col, row);
     let (local_col, local_row) = grid_to_local(col, row);
@@ -312,13 +313,54 @@ pub fn set_checkbox_checked(state: AppState, col: u32, row: u32) -> Option<bool>
         }
     });
 
-    // Send to server
-    if let Some(client) = get_client() {
-        let args = encode_update_checkbox_args(chunk_id, bit_offset as u32, true);
-        call_reducer(&client, "update_checkbox", &args);
-    }
+    // Queue update for batching instead of sending immediately
+    state.pending_updates.update(|updates| {
+        updates.push((chunk_id, bit_offset as u32, true));
+    });
 
     Some(true) // Changed from unchecked to checked
+}
+
+/// Flush pending updates to the server as a batch
+/// This should be called on mouseup or after a debounce timer
+pub fn flush_pending_updates(state: AppState) {
+    // Take all pending updates atomically
+    let updates = state.pending_updates.with_untracked(|u| u.clone());
+    if updates.is_empty() {
+        return;
+    }
+
+    // Clear pending updates
+    state.pending_updates.set(Vec::new());
+
+    web_sys::console::log_1(&format!("Flushing {} pending updates", updates.len()).into());
+
+    // Send batch to server
+    if let Some(client) = get_client() {
+        let args = encode_batch_update_args(&updates);
+        call_reducer(&client, "batch_update_checkboxes", &args);
+    }
+}
+
+/// Encode arguments for batch_update_checkboxes reducer
+/// Format: length-prefixed array of (chunk_id: u32, bit_offset: u32, checked: bool)
+fn encode_batch_update_args(updates: &[(u32, u32, bool)]) -> Vec<u8> {
+    // BSATN encoding for Vec<(u32, u32, bool)>
+    // Vec is encoded as: length (u32) followed by elements
+    // Each element (tuple) is encoded as: u32 + u32 + bool = 9 bytes
+    let mut buf = Vec::with_capacity(4 + updates.len() * 9);
+
+    // Array length (u32, little-endian)
+    buf.extend_from_slice(&(updates.len() as u32).to_le_bytes());
+
+    // Each update
+    for (chunk_id, bit_offset, checked) in updates {
+        buf.extend_from_slice(&chunk_id.to_le_bytes());
+        buf.extend_from_slice(&bit_offset.to_le_bytes());
+        buf.push(if *checked { 1 } else { 0 });
+    }
+
+    buf
 }
 
 /// Encode arguments for update_checkbox reducer

@@ -7,7 +7,9 @@ use wasm_bindgen::JsCast;
 use web_sys::{MouseEvent, WheelEvent};
 
 use crate::constants::*;
-use crate::db::{set_checkbox_checked, subscribe_to_chunks, toggle_checkbox};
+use crate::db::{
+    flush_pending_updates, set_checkbox_checked, subscribe_to_chunks, toggle_checkbox,
+};
 use crate::state::AppState;
 use crate::utils::{canvas_to_grid, visible_chunk_ids};
 use crate::webgl::WebGLRenderer;
@@ -245,11 +247,19 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
     };
 
     let on_mouseup = move |_: MouseEvent| {
+        // Flush any pending updates when drawing stops
+        if state.is_drawing.get_untracked() {
+            flush_pending_updates(state);
+        }
         state.is_dragging.set(false);
         state.is_drawing.set(false);
     };
 
     let on_mouseleave = move |_: MouseEvent| {
+        // Flush any pending updates when mouse leaves canvas
+        if state.is_drawing.get_untracked() {
+            flush_pending_updates(state);
+        }
         state.is_dragging.set(false);
         state.is_drawing.set(false);
     };

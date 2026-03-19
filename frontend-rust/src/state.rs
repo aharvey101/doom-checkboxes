@@ -1,6 +1,9 @@
 use leptos::prelude::*;
 use std::collections::{HashMap, HashSet};
 
+/// Pending update for batch sending: (chunk_id, bit_offset, checked)
+pub type PendingUpdate = (u32, u32, bool);
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionStatus {
     Connecting,
@@ -42,6 +45,9 @@ pub struct AppState {
     // Drawing state (for drag-to-fill)
     pub is_drawing: RwSignal<bool>,
 
+    // Pending updates for batching (chunk_id, bit_offset, checked)
+    pub pending_updates: RwSignal<Vec<PendingUpdate>>,
+
     // Render throttling
     pub render_pending: RwSignal<bool>,
 
@@ -67,6 +73,7 @@ impl AppState {
             last_mouse_x: RwSignal::new(0.0),
             last_mouse_y: RwSignal::new(0.0),
             is_drawing: RwSignal::new(false),
+            pending_updates: RwSignal::new(Vec::new()),
             render_pending: RwSignal::new(false),
             skip_next_render: RwSignal::new(false),
             render_version: RwSignal::new(0),
