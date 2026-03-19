@@ -1,5 +1,7 @@
 pub mod app;
+pub mod bookmark;
 pub mod components;
+pub mod compression;
 pub mod constants;
 pub mod db;
 pub mod state;

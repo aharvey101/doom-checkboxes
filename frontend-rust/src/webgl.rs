@@ -7,11 +7,11 @@
 
 use wasm_bindgen::JsCast;
 use web_sys::{
-    HtmlCanvasElement, WebGlProgram, WebGlRenderingContext as GL, WebGlShader, WebGlTexture,
-    WebGlUniformLocation,
+    HtmlCanvasElement, WebGlBuffer, WebGlProgram, WebGlRenderingContext as GL, WebGlShader,
+    WebGlTexture, WebGlUniformLocation,
 };
 
-use crate::constants::{CELL_SIZE, CHUNKS_X, CHUNK_SIZE, COLOR_GRID, COLOR_UNCHECKED};
+use crate::constants::{CELL_SIZE, CHUNK_SIZE, COLOR_GRID, COLOR_UNCHECKED};
 use crate::utils::visible_chunk_range;
 use std::collections::HashMap;
 
@@ -33,7 +33,7 @@ const FRAGMENT_SHADER: &str = r#"
     
     uniform sampler2D u_checkboxState;
     uniform vec2 u_resolution;      // Canvas size in pixels
-    uniform vec2 u_offset;          // Pan offset in pixels
+    uniform vec2 u_offset;          // Chunk offset in pixels (where chunk starts on screen)
     uniform float u_scale;          // Zoom scale
     uniform float u_cellSize;       // Base cell size in pixels
     uniform vec2 u_gridSize;        // Grid dimensions (1000, 1000)
@@ -45,17 +45,17 @@ const FRAGMENT_SHADER: &str = r#"
         // Flip Y axis: WebGL has Y=0 at bottom, Canvas has Y=0 at top
         vec2 pixelCoord = vec2(v_texCoord.x, 1.0 - v_texCoord.y) * u_resolution;
         
-        // Apply viewport transform (inverse of rendering transform)
+        // Calculate position within the chunk (relative to chunk origin)
         vec2 gridPixel = (pixelCoord - u_offset) / (u_cellSize * u_scale);
         
-        // Check if we're outside the grid
+        // Check if we're outside this chunk's grid
         if (gridPixel.x < 0.0 || gridPixel.y < 0.0 || 
             gridPixel.x >= u_gridSize.x || gridPixel.y >= u_gridSize.y) {
             gl_FragColor = vec4(u_colorGrid, 1.0);
             return;
         }
         
-        // Get cell coordinates
+        // Get cell coordinates within chunk
         vec2 cell = floor(gridPixel);
         vec2 cellFrac = fract(gridPixel);
         
@@ -89,10 +89,12 @@ const FRAGMENT_SHADER: &str = r#"
 
 pub struct WebGLRenderer {
     gl: GL,
-    #[allow(dead_code)]
     program: WebGlProgram,
+    vertex_buffer: web_sys::WebGlBuffer,
+    a_position: u32,
     state_texture: WebGlTexture,
     // Uniform locations
+    u_checkbox_state: WebGlUniformLocation,
     u_resolution: WebGlUniformLocation,
     u_offset: WebGlUniformLocation,
     u_scale: WebGlUniformLocation,
@@ -165,6 +167,9 @@ impl WebGLRenderer {
         gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_WRAP_T, GL::CLAMP_TO_EDGE as i32);
 
         // Get uniform locations
+        let u_checkbox_state = gl
+            .get_uniform_location(&program, "u_checkboxState")
+            .ok_or("u_checkboxState not found")?;
         let u_resolution = gl
             .get_uniform_location(&program, "u_resolution")
             .ok_or("u_resolution not found")?;
@@ -191,6 +196,8 @@ impl WebGLRenderer {
         gl.uniform1f(Some(&u_cell_size), crate::constants::CELL_SIZE as f32);
         // Each chunk is CHUNK_SIZE x CHUNK_SIZE, not the full grid
         gl.uniform2f(Some(&u_grid_size), CHUNK_SIZE as f32, CHUNK_SIZE as f32);
+        // Set sampler to texture unit 0
+        gl.uniform1i(Some(&u_checkbox_state), 0);
 
         // Parse and set colors (only unchecked and grid colors needed now)
         let (ur, ug, ub) = parse_hex_color(COLOR_UNCHECKED);
@@ -202,7 +209,10 @@ impl WebGLRenderer {
         Ok(Self {
             gl,
             program,
+            vertex_buffer: buffer,
+            a_position,
             state_texture,
+            u_checkbox_state,
             u_resolution,
             u_offset,
             u_scale,
@@ -216,13 +226,23 @@ impl WebGLRenderer {
     pub fn render(
         &self,
         canvas: &HtmlCanvasElement,
-        loaded_chunks: &HashMap<u32, Vec<u8>>,
+        loaded_chunks: &HashMap<i64, Vec<u8>>,
         offset_x: f64,
         offset_y: f64,
         scale: f64,
     ) {
         let width = canvas.width() as f64;
         let height = canvas.height() as f64;
+
+        // Ensure program is active for all drawing
+        self.gl.use_program(Some(&self.program));
+
+        // Re-bind vertex buffer and attribute (may have been unbound by other GL operations)
+        self.gl
+            .bind_buffer(GL::ARRAY_BUFFER, Some(&self.vertex_buffer));
+        self.gl.enable_vertex_attrib_array(self.a_position);
+        self.gl
+            .vertex_attrib_pointer_with_i32(self.a_position, 2, GL::FLOAT, false, 0, 0);
 
         self.gl.viewport(0, 0, width as i32, height as i32);
 
@@ -231,18 +251,20 @@ impl WebGLRenderer {
         self.gl.clear_color(bg_r, bg_g, bg_b, 1.0);
         self.gl.clear(GL::COLOR_BUFFER_BIT);
 
-        // Calculate visible chunk range
+        // Calculate visible chunk range (signed coordinates)
         let (min_cx, min_cy, max_cx, max_cy) =
             visible_chunk_range(offset_x, offset_y, scale, width, height);
 
-        // Render each loaded chunk in visible range
+        // Create empty chunk data for unloaded chunks (lazily, reused)
+        let empty_chunk: Vec<u8> = vec![0u8; crate::constants::CHUNK_DATA_SIZE];
+
+        // Render each visible chunk (loaded or empty)
         for cy in min_cy..=max_cy {
             for cx in min_cx..=max_cx {
-                let chunk_id = cx + cy * CHUNKS_X;
-                if let Some(chunk_data) = loaded_chunks.get(&chunk_id) {
-                    self.render_chunk(canvas, chunk_id, chunk_data, offset_x, offset_y, scale);
-                }
-                // Unloaded chunks just show background (already cleared)
+                // Use chunk coordinates to find chunk in loaded_chunks
+                let chunk_id = crate::utils::chunk_coords_to_id(cx, cy);
+                let chunk_data = loaded_chunks.get(&chunk_id).unwrap_or(&empty_chunk);
+                self.render_chunk(canvas, cx, cy, chunk_data, offset_x, offset_y, scale);
             }
         }
     }
@@ -250,7 +272,8 @@ impl WebGLRenderer {
     fn render_chunk(
         &self,
         canvas: &HtmlCanvasElement,
-        chunk_id: u32,
+        chunk_x: i32,
+        chunk_y: i32,
         chunk_data: &[u8],
         offset_x: f64,
         offset_y: f64,
@@ -259,9 +282,7 @@ impl WebGLRenderer {
         let width = canvas.width() as f64;
         let height = canvas.height() as f64;
 
-        // Calculate chunk's world position
-        let chunk_x = chunk_id % CHUNKS_X;
-        let chunk_y = chunk_id / CHUNKS_X;
+        // Calculate chunk's world position using signed coordinates
         let chunk_pixel_size = CHUNK_SIZE as f64 * CELL_SIZE * scale;
         let chunk_screen_x = offset_x + (chunk_x as f64) * chunk_pixel_size;
         let chunk_screen_y = offset_y + (chunk_y as f64) * chunk_pixel_size;
@@ -269,13 +290,27 @@ impl WebGLRenderer {
         // Scissor test to only draw within this chunk's region
         self.gl.enable(GL::SCISSOR_TEST);
 
-        // Clip to chunk bounds (WebGL scissor Y is from bottom)
-        let scissor_x = chunk_screen_x.max(0.0) as i32;
-        let scissor_y = (height - chunk_screen_y - chunk_pixel_size).max(0.0) as i32;
-        let scissor_w = chunk_pixel_size.min(width - chunk_screen_x.max(0.0)) as i32;
-        let scissor_h = chunk_pixel_size
-            .min(height - (height - chunk_screen_y - chunk_pixel_size).max(0.0))
-            as i32;
+        // Calculate the visible portion of this chunk on screen
+        // In Canvas2D coords (Y=0 at top), the chunk occupies:
+        //   X: [chunk_screen_x, chunk_screen_x + chunk_pixel_size]
+        //   Y: [chunk_screen_y, chunk_screen_y + chunk_pixel_size]
+
+        // Clamp to canvas bounds
+        let visible_left = chunk_screen_x.max(0.0);
+        let visible_right = (chunk_screen_x + chunk_pixel_size).min(width);
+        let visible_top = chunk_screen_y.max(0.0);
+        let visible_bottom = (chunk_screen_y + chunk_pixel_size).min(height);
+
+        // Calculate scissor dimensions
+        let scissor_w = (visible_right - visible_left) as i32;
+        let scissor_h = (visible_bottom - visible_top) as i32;
+
+        // Convert to WebGL coordinates (Y=0 at bottom)
+        // scissor_x is the left edge in WebGL coords (same as Canvas2D)
+        let scissor_x = visible_left as i32;
+        // scissor_y is the BOTTOM edge in WebGL coords
+        // Canvas2D visible_bottom corresponds to WebGL (height - visible_bottom)
+        let scissor_y = (height - visible_bottom) as i32;
 
         if scissor_w <= 0 || scissor_h <= 0 {
             self.gl.disable(GL::SCISSOR_TEST);
@@ -285,6 +320,7 @@ impl WebGLRenderer {
         self.gl.scissor(scissor_x, scissor_y, scissor_w, scissor_h);
 
         // Upload chunk texture
+        self.gl.active_texture(GL::TEXTURE0);
         self.gl
             .bind_texture(GL::TEXTURE_2D, Some(&self.state_texture));
 
@@ -333,8 +369,8 @@ impl WebGLRenderer {
     pub fn render_cell_immediate(
         &self,
         canvas: &HtmlCanvasElement,
-        col: u32,
-        row: u32,
+        col: i32,
+        row: i32,
         is_checked: bool,
         color: (u8, u8, u8), // RGB color for checked state
         offset_x: f64,

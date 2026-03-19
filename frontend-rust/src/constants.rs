@@ -1,16 +1,12 @@
-// Grid configuration: 40,000 x 25,000 = 1 billion checkboxes
-pub const GRID_WIDTH: u32 = 40_000;
-pub const GRID_HEIGHT: u32 = 25_000;
-pub const TOTAL_CHECKBOXES: u64 = GRID_WIDTH as u64 * GRID_HEIGHT as u64;
+// Cell size in pixels at 1x scale
 pub const CELL_SIZE: f64 = 8.0;
 
-// Chunk configuration
+// Chunk configuration - infinite grid with 1000x1000 chunks
 pub const CHUNK_SIZE: u32 = 1_000; // 1000x1000 checkboxes per chunk
-pub const CHUNKS_X: u32 = 40; // GRID_WIDTH / CHUNK_SIZE
-pub const CHUNKS_Y: u32 = 25; // GRID_HEIGHT / CHUNK_SIZE
-pub const TOTAL_CHUNKS: u32 = CHUNKS_X * CHUNKS_Y; // 1000
-                                                   // 4 bytes per checkbox (R, G, B, checked)
-pub const CHUNK_DATA_SIZE: usize = CHUNK_SIZE as usize * CHUNK_SIZE as usize * 4; // 4,000,000 bytes
+pub const CHECKBOXES_PER_CHUNK: usize = CHUNK_SIZE as usize * CHUNK_SIZE as usize; // 1,000,000
+
+// 4 bytes per checkbox (R, G, B, A) for WebGL texture
+pub const CHUNK_DATA_SIZE: usize = CHECKBOXES_PER_CHUNK * 4; // 4,000,000 bytes
 
 // Zoom bounds
 pub const MIN_SCALE: f64 = 0.1;

@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::constants::USER_COLOR_KEY;
 
-/// Pending update for batch sending: (chunk_id, cell_offset, r, g, b, checked)
-pub type PendingUpdate = (u32, u32, u8, u8, u8, bool);
+/// Pending update for batch sending: (chunk_id: i64, cell_offset: u32, r, g, b, checked)
+pub type PendingUpdate = (i64, u32, u8, u8, u8, bool);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionStatus {
@@ -29,10 +29,10 @@ pub struct AppState {
     pub status: RwSignal<ConnectionStatus>,
     pub status_message: RwSignal<String>,
 
-    // Multi-chunk data storage
-    pub loaded_chunks: RwSignal<HashMap<u32, Vec<u8>>>, // chunk_id -> data
-    pub loading_chunks: RwSignal<HashSet<u32>>,         // chunks being fetched
-    pub subscribed_chunks: RwSignal<HashSet<u32>>,      // active subscriptions
+    // Multi-chunk data storage (keyed by chunk_id: i64)
+    pub loaded_chunks: RwSignal<HashMap<i64, Vec<u8>>>, // chunk_id -> data
+    pub loading_chunks: RwSignal<HashSet<i64>>,         // chunks being fetched
+    pub subscribed_chunks: RwSignal<HashSet<i64>>,      // active subscriptions
 
     // Viewport state
     pub offset_x: RwSignal<f64>,
@@ -44,10 +44,10 @@ pub struct AppState {
     pub last_mouse_x: RwSignal<f64>,
     pub last_mouse_y: RwSignal<f64>,
 
-    // Drawing state (for drag-to-fill)
+    // Drawing state (for drag-to-fill) - signed coords for infinite grid
     pub is_drawing: RwSignal<bool>,
-    pub last_draw_col: RwSignal<Option<u32>>,
-    pub last_draw_row: RwSignal<Option<u32>>,
+    pub last_draw_col: RwSignal<Option<i32>>,
+    pub last_draw_row: RwSignal<Option<i32>>,
 
     // Pending updates for batching (chunk_id, cell_offset, r, g, b, checked)
     pub pending_updates: RwSignal<Vec<PendingUpdate>>,
@@ -63,6 +63,12 @@ pub struct AppState {
 
     // User's color (RGB)
     pub user_color: RwSignal<(u8, u8, u8)>,
+
+    // Touch state for mobile
+    pub touch_count: RwSignal<u32>,         // Number of active touches
+    pub last_touch_distance: RwSignal<f64>, // For pinch zoom
+    pub last_touch_midpoint: RwSignal<(f64, f64)>, // For two-finger pan
+    pub is_pinching: RwSignal<bool>,        // Two-finger gesture active
 }
 
 impl AppState {
@@ -89,6 +95,10 @@ impl AppState {
             skip_next_render: RwSignal::new(false),
             render_version: RwSignal::new(0),
             user_color: RwSignal::new(user_color),
+            touch_count: RwSignal::new(0),
+            last_touch_distance: RwSignal::new(0.0),
+            last_touch_midpoint: RwSignal::new((0.0, 0.0)),
+            is_pinching: RwSignal::new(false),
         }
     }
 }

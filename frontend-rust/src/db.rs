@@ -9,11 +9,10 @@
 
 use crate::constants::CHUNK_DATA_SIZE;
 use crate::state::{AppState, ConnectionStatus, PendingUpdate};
-use crate::utils::{grid_to_chunk_id, grid_to_local};
+use crate::utils::{chunk_coords_to_id, grid_to_chunk_coords, grid_to_local};
 use crate::ws_client::{call_reducer, connect, subscribe, SharedClient, SpacetimeClient};
 use leptos::prelude::*;
 use std::cell::RefCell;
-use std::collections::HashSet;
 use std::rc::Rc;
 
 use crate::constants::CHUNK_SIZE;
@@ -21,7 +20,7 @@ use crate::constants::CHUNK_SIZE;
 /// CheckboxChunk row structure matching the backend schema
 #[derive(Debug, Clone)]
 pub struct CheckboxChunk {
-    pub chunk_id: u32,
+    pub chunk_id: i64,
     pub state: Vec<u8>,
     pub version: u64,
 }
@@ -30,15 +29,17 @@ impl CheckboxChunk {
     /// Deserialize a CheckboxChunk from BSATN bytes
     pub fn from_bsatn(bytes: &[u8]) -> Option<Self> {
         // SpacetimeDB encodes product types as sequential fields
-        // CheckboxChunk = { chunk_id: u32, state: Vec<u8>, version: u64 }
+        // CheckboxChunk = { chunk_id: i64, state: Vec<u8>, version: u64 }
         let mut reader = bytes;
 
-        // Read chunk_id (u32, little-endian)
-        if reader.len() < 4 {
+        // Read chunk_id (i64, little-endian)
+        if reader.len() < 8 {
             return None;
         }
-        let chunk_id = u32::from_le_bytes([reader[0], reader[1], reader[2], reader[3]]);
-        reader = &reader[4..];
+        let chunk_id = i64::from_le_bytes([
+            reader[0], reader[1], reader[2], reader[3], reader[4], reader[5], reader[6], reader[7],
+        ]);
+        reader = &reader[8..];
 
         // Read state (Vec<u8>): length-prefixed with u32
         if reader.len() < 4 {
@@ -257,10 +258,11 @@ pub fn init_connection(state: AppState) {
     connect(client, &uri, &database);
 }
 
-/// Toggle a checkbox at the given grid position
+/// Toggle a checkbox at the given grid position (signed coords for infinite grid)
 /// Returns the new checked state for immediate visual feedback
-pub fn toggle_checkbox(state: AppState, col: u32, row: u32) -> Option<bool> {
-    let chunk_id = grid_to_chunk_id(col, row);
+pub fn toggle_checkbox(state: AppState, col: i32, row: i32) -> Option<bool> {
+    let (chunk_x, chunk_y) = grid_to_chunk_coords(col, row);
+    let chunk_id = chunk_coords_to_id(chunk_x, chunk_y);
     let (local_col, local_row) = grid_to_local(col, row);
     let cell_offset = local_to_cell_offset(local_col, local_row) as usize;
 
@@ -292,7 +294,7 @@ pub fn toggle_checkbox(state: AppState, col: u32, row: u32) -> Option<bool> {
 
     // Send to server
     if let Some(client) = get_client() {
-        // Encode reducer arguments: (chunk_id: u32, cell_offset: u32, r: u8, g: u8, b: u8, checked: bool)
+        // Encode reducer arguments: (chunk_id: i64, cell_offset: u32, r: u8, g: u8, b: u8, checked: bool)
         let args = encode_update_checkbox_args(chunk_id, cell_offset as u32, r, g, b, new_value);
         call_reducer(&client, "update_checkbox", &args);
     }
@@ -303,8 +305,9 @@ pub fn toggle_checkbox(state: AppState, col: u32, row: u32) -> Option<bool> {
 /// Set a checkbox to checked at the given grid position (for drag-to-fill)
 /// Returns true if the checkbox was changed (was unchecked), false if already checked
 /// Note: This queues the update for batching instead of sending immediately
-pub fn set_checkbox_checked(state: AppState, col: u32, row: u32) -> Option<bool> {
-    let chunk_id = grid_to_chunk_id(col, row);
+pub fn set_checkbox_checked(state: AppState, col: i32, row: i32) -> Option<bool> {
+    let (chunk_x, chunk_y) = grid_to_chunk_coords(col, row);
+    let chunk_id = chunk_coords_to_id(chunk_x, chunk_y);
     let (local_col, local_row) = grid_to_local(col, row);
     let cell_offset = local_to_cell_offset(local_col, local_row) as usize;
 
@@ -369,12 +372,12 @@ pub fn flush_pending_updates(state: AppState) {
 }
 
 /// Encode arguments for batch_update_checkboxes reducer
-/// Format: length-prefixed array of CheckboxUpdate { chunk_id: u32, cell_offset: u32, r: u8, g: u8, b: u8, checked: bool }
+/// Format: length-prefixed array of CheckboxUpdate { chunk_id: i64, cell_offset: u32, r: u8, g: u8, b: u8, checked: bool }
 fn encode_batch_update_args(updates: &[PendingUpdate]) -> Vec<u8> {
     // BSATN encoding for Vec<CheckboxUpdate>
     // Vec is encoded as: length (u32) followed by elements
-    // Each element is encoded as: u32 + u32 + u8 + u8 + u8 + bool = 12 bytes
-    let mut buf = Vec::with_capacity(4 + updates.len() * 12);
+    // Each element is encoded as: i64 + u32 + u8 + u8 + u8 + bool = 16 bytes
+    let mut buf = Vec::with_capacity(4 + updates.len() * 16);
 
     // Array length (u32, little-endian)
     buf.extend_from_slice(&(updates.len() as u32).to_le_bytes());
@@ -393,9 +396,9 @@ fn encode_batch_update_args(updates: &[PendingUpdate]) -> Vec<u8> {
 }
 
 /// Encode arguments for update_checkbox reducer
-/// Format: CheckboxUpdate { chunk_id: u32, cell_offset: u32, r: u8, g: u8, b: u8, checked: bool }
+/// Format: CheckboxUpdate { chunk_id: i64, cell_offset: u32, r: u8, g: u8, b: u8, checked: bool }
 fn encode_update_checkbox_args(
-    chunk_id: u32,
+    chunk_id: i64,
     cell_offset: u32,
     r: u8,
     g: u8,
@@ -403,10 +406,10 @@ fn encode_update_checkbox_args(
     checked: bool,
 ) -> Vec<u8> {
     // BSATN encoding: product type with six fields
-    // u32 + u32 + u8 + u8 + u8 + bool = 12 bytes
-    let mut buf = Vec::with_capacity(12);
+    // i64 + u32 + u8 + u8 + u8 + bool = 16 bytes
+    let mut buf = Vec::with_capacity(16);
 
-    // chunk_id: u32 (little-endian)
+    // chunk_id: i64 (little-endian)
     buf.extend_from_slice(&chunk_id.to_le_bytes());
 
     // cell_offset: u32 (little-endian)
@@ -427,10 +430,12 @@ fn encode_update_checkbox_args(
     buf
 }
 
-/// Subscribe to a set of chunks
-pub fn subscribe_to_chunks(state: AppState, chunk_ids: HashSet<u32>) {
+/// Subscribe to a set of chunks by their coordinates
+pub fn subscribe_to_chunks(state: AppState, chunks: Vec<(i32, i32)>) {
     if let Some(client) = get_client() {
-        for chunk_id in chunk_ids {
+        for (chunk_x, chunk_y) in chunks {
+            let chunk_id = chunk_coords_to_id(chunk_x, chunk_y);
+
             // Skip if already subscribed or loading
             if state
                 .subscribed_chunks
@@ -454,7 +459,13 @@ pub fn subscribe_to_chunks(state: AppState, chunk_ids: HashSet<u32>) {
             let query = format!("SELECT * FROM checkbox_chunk WHERE chunk_id = {}", chunk_id);
             subscribe(&client, &[&query]);
 
-            web_sys::console::log_1(&format!("Subscribing to chunk {}", chunk_id).into());
+            web_sys::console::log_1(
+                &format!(
+                    "Subscribing to chunk ({}, {}) id={}",
+                    chunk_x, chunk_y, chunk_id
+                )
+                .into(),
+            );
         }
     }
 }

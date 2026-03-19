@@ -4,18 +4,33 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{MouseEvent, WheelEvent};
+use web_sys::{MouseEvent, TouchEvent, WheelEvent};
 
 use crate::constants::*;
 use crate::db::{
     flush_pending_updates, set_checkbox_checked, subscribe_to_chunks, toggle_checkbox,
 };
 use crate::state::AppState;
-use crate::utils::{canvas_to_grid, visible_chunk_ids};
+use crate::utils::{canvas_to_grid, visible_chunks};
 use crate::webgl::WebGLRenderer;
 
+/// Calculate distance between two touch points
+fn touch_distance(t1: &web_sys::Touch, t2: &web_sys::Touch) -> f64 {
+    let dx = t1.client_x() as f64 - t2.client_x() as f64;
+    let dy = t1.client_y() as f64 - t2.client_y() as f64;
+    (dx * dx + dy * dy).sqrt()
+}
+
+/// Calculate midpoint between two touch points
+fn touch_midpoint(t1: &web_sys::Touch, t2: &web_sys::Touch) -> (f64, f64) {
+    let x = (t1.client_x() as f64 + t2.client_x() as f64) / 2.0;
+    let y = (t1.client_y() as f64 + t2.client_y() as f64) / 2.0;
+    (x, y)
+}
+
 /// Bresenham's line algorithm - returns all grid cells between two points (inclusive)
-fn line_cells(x0: u32, y0: u32, x1: u32, y1: u32) -> Vec<(u32, u32)> {
+/// Uses signed coordinates for infinite grid
+fn line_cells(x0: i32, y0: i32, x1: i32, y1: i32) -> Vec<(i32, i32)> {
     let mut cells = Vec::new();
 
     let dx = (x1 as i64 - x0 as i64).abs();
@@ -28,7 +43,7 @@ fn line_cells(x0: u32, y0: u32, x1: u32, y1: u32) -> Vec<(u32, u32)> {
     let mut y = y0 as i64;
 
     loop {
-        cells.push((x as u32, y as u32));
+        cells.push((x as i32, y as i32));
 
         if x == x1 as i64 && y == y1 as i64 {
             break;
@@ -147,7 +162,7 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
             let width = canvas.width() as f64;
             let height = canvas.height() as f64;
 
-            let visible = visible_chunk_ids(offset_x, offset_y, scale, width, height);
+            let visible = visible_chunks(offset_x, offset_y, scale, width, height);
             subscribe_to_chunks(state, visible);
         }
     });
@@ -194,16 +209,15 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
         let offset_y = state.offset_y.get_untracked();
         let scale = state.scale.get_untracked();
 
-        if let Some((col, row)) = canvas_to_grid(x, y, offset_x, offset_y, scale) {
-            // Toggle and get new value
-            if let Some(new_value) = toggle_checkbox(state, col, row) {
-                // Immediate visual feedback - render just this cell
-                if let Some(ref r) = *renderer_for_click.borrow() {
-                    let user_color = state.user_color.get_untracked();
-                    r.render_cell_immediate(
-                        &canvas, col, row, new_value, user_color, offset_x, offset_y, scale,
-                    );
-                }
+        let (col, row) = canvas_to_grid(x, y, offset_x, offset_y, scale);
+        // Toggle and get new value
+        if let Some(new_value) = toggle_checkbox(state, col, row) {
+            // Immediate visual feedback - render just this cell
+            if let Some(ref r) = *renderer_for_click.borrow() {
+                let user_color = state.user_color.get_untracked();
+                r.render_cell_immediate(
+                    &canvas, col, row, new_value, user_color, offset_x, offset_y, scale,
+                );
             }
         }
     };
@@ -233,19 +247,18 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
                 let offset_y = state.offset_y.get_untracked();
                 let scale = state.scale.get_untracked();
 
-                if let Some((col, row)) = canvas_to_grid(x, y, offset_x, offset_y, scale) {
-                    // Track the starting position for line interpolation
-                    state.last_draw_col.set(Some(col));
-                    state.last_draw_row.set(Some(row));
+                let (col, row) = canvas_to_grid(x, y, offset_x, offset_y, scale);
+                // Track the starting position for line interpolation
+                state.last_draw_col.set(Some(col));
+                state.last_draw_row.set(Some(row));
 
-                    if let Some(true) = set_checkbox_checked(state, col, row) {
-                        // Render immediately
-                        if let Some(ref r) = *renderer_for_draw.borrow() {
-                            let user_color = state.user_color.get_untracked();
-                            r.render_cell_immediate(
-                                &canvas, col, row, true, user_color, offset_x, offset_y, scale,
-                            );
-                        }
+                if let Some(true) = set_checkbox_checked(state, col, row) {
+                    // Render immediately
+                    if let Some(ref r) = *renderer_for_draw.borrow() {
+                        let user_color = state.user_color.get_untracked();
+                        r.render_cell_immediate(
+                            &canvas, col, row, true, user_color, offset_x, offset_y, scale,
+                        );
                     }
                 }
             }
@@ -275,34 +288,33 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
             let offset_y = state.offset_y.get_untracked();
             let scale = state.scale.get_untracked();
 
-            if let Some((col, row)) = canvas_to_grid(x, y, offset_x, offset_y, scale) {
-                // Get last position for line interpolation
-                let last_col = state.last_draw_col.get_untracked();
-                let last_row = state.last_draw_row.get_untracked();
+            let (col, row) = canvas_to_grid(x, y, offset_x, offset_y, scale);
+            // Get last position for line interpolation
+            let last_col = state.last_draw_col.get_untracked();
+            let last_row = state.last_draw_row.get_untracked();
 
-                // Get all cells along the line from last position to current
-                let cells = match (last_col, last_row) {
-                    (Some(lc), Some(lr)) if lc != col || lr != row => line_cells(lc, lr, col, row),
-                    _ => vec![(col, row)],
-                };
+            // Get all cells along the line from last position to current
+            let cells = match (last_col, last_row) {
+                (Some(lc), Some(lr)) if lc != col || lr != row => line_cells(lc, lr, col, row),
+                _ => vec![(col, row)],
+            };
 
-                // Fill all cells along the line
-                for (c, r) in cells {
-                    if let Some(true) = set_checkbox_checked(state, c, r) {
-                        // Render immediately
-                        if let Some(ref renderer) = *renderer_for_move.borrow() {
-                            let user_color = state.user_color.get_untracked();
-                            renderer.render_cell_immediate(
-                                &canvas, c, r, true, user_color, offset_x, offset_y, scale,
-                            );
-                        }
+            // Fill all cells along the line
+            for (c, r) in cells {
+                if let Some(true) = set_checkbox_checked(state, c, r) {
+                    // Render immediately
+                    if let Some(ref renderer) = *renderer_for_move.borrow() {
+                        let user_color = state.user_color.get_untracked();
+                        renderer.render_cell_immediate(
+                            &canvas, c, r, true, user_color, offset_x, offset_y, scale,
+                        );
                     }
                 }
-
-                // Update last position
-                state.last_draw_col.set(Some(col));
-                state.last_draw_row.set(Some(row));
             }
+
+            // Update last position
+            state.last_draw_col.set(Some(col));
+            state.last_draw_row.set(Some(row));
         }
     };
 
@@ -334,6 +346,173 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
         handle_wheel(e, &state, &canvas_ref);
     };
 
+    // Touch handlers for mobile
+    let renderer_for_touchstart = renderer.clone();
+    let on_touchstart = move |e: TouchEvent| {
+        e.prevent_default(); // Prevent scroll/zoom browser behavior
+
+        let touches = e.touches();
+        let touch_count = touches.length();
+        state.touch_count.set(touch_count);
+
+        if touch_count == 1 {
+            // Single finger - start drawing mode
+            let touch = touches.get(0).unwrap();
+            let Some(canvas) = canvas_ref.get() else {
+                return;
+            };
+            let rect = canvas.get_bounding_client_rect();
+            let x = touch.client_x() as f64 - rect.left();
+            let y = touch.client_y() as f64 - rect.top();
+
+            let offset_x = state.offset_x.get_untracked();
+            let offset_y = state.offset_y.get_untracked();
+            let scale = state.scale.get_untracked();
+
+            let (col, row) = canvas_to_grid(x, y, offset_x, offset_y, scale);
+
+            // Start drawing
+            state.is_drawing.set(true);
+            state.last_draw_col.set(Some(col));
+            state.last_draw_row.set(Some(row));
+
+            // Fill the first checkbox
+            if let Some(true) = set_checkbox_checked(state, col, row) {
+                if let Some(ref r) = *renderer_for_touchstart.borrow() {
+                    let user_color = state.user_color.get_untracked();
+                    r.render_cell_immediate(
+                        &canvas, col, row, true, user_color, offset_x, offset_y, scale,
+                    );
+                }
+            }
+        } else if touch_count == 2 {
+            // Two fingers - start pinch/pan mode
+            state.is_drawing.set(false);
+            state.is_pinching.set(true);
+
+            let t1 = touches.get(0).unwrap();
+            let t2 = touches.get(1).unwrap();
+
+            state.last_touch_distance.set(touch_distance(&t1, &t2));
+            state.last_touch_midpoint.set(touch_midpoint(&t1, &t2));
+        }
+    };
+
+    let renderer_for_touchmove = renderer.clone();
+    let on_touchmove = move |e: TouchEvent| {
+        e.prevent_default();
+
+        let touches = e.touches();
+        let touch_count = touches.length();
+
+        if touch_count == 1 && state.is_drawing.get_untracked() {
+            // Single finger drawing
+            let touch = touches.get(0).unwrap();
+            let Some(canvas) = canvas_ref.get() else {
+                return;
+            };
+            let rect = canvas.get_bounding_client_rect();
+            let x = touch.client_x() as f64 - rect.left();
+            let y = touch.client_y() as f64 - rect.top();
+
+            let offset_x = state.offset_x.get_untracked();
+            let offset_y = state.offset_y.get_untracked();
+            let scale = state.scale.get_untracked();
+
+            let (col, row) = canvas_to_grid(x, y, offset_x, offset_y, scale);
+            let last_col = state.last_draw_col.get_untracked();
+            let last_row = state.last_draw_row.get_untracked();
+
+            // Get all cells along the line
+            let cells = match (last_col, last_row) {
+                (Some(lc), Some(lr)) if lc != col || lr != row => line_cells(lc, lr, col, row),
+                _ => vec![(col, row)],
+            };
+
+            // Fill all cells
+            for (c, r) in cells {
+                if let Some(true) = set_checkbox_checked(state, c, r) {
+                    if let Some(ref renderer) = *renderer_for_touchmove.borrow() {
+                        let user_color = state.user_color.get_untracked();
+                        renderer.render_cell_immediate(
+                            &canvas, c, r, true, user_color, offset_x, offset_y, scale,
+                        );
+                    }
+                }
+            }
+
+            state.last_draw_col.set(Some(col));
+            state.last_draw_row.set(Some(row));
+        } else if touch_count == 2 && state.is_pinching.get_untracked() {
+            // Two finger pinch/pan
+            let t1 = touches.get(0).unwrap();
+            let t2 = touches.get(1).unwrap();
+
+            let new_distance = touch_distance(&t1, &t2);
+            let new_midpoint = touch_midpoint(&t1, &t2);
+
+            let last_distance = state.last_touch_distance.get_untracked();
+            let (last_mid_x, last_mid_y) = state.last_touch_midpoint.get_untracked();
+
+            // Handle zoom (pinch)
+            if last_distance > 0.0 {
+                let Some(canvas) = canvas_ref.get() else {
+                    return;
+                };
+                let rect = canvas.get_bounding_client_rect();
+                let zoom_center_x = new_midpoint.0 - rect.left();
+                let zoom_center_y = new_midpoint.1 - rect.top();
+
+                let scale_factor = new_distance / last_distance;
+                let current_scale = state.scale.get_untracked();
+                let new_scale = (current_scale * scale_factor).clamp(MIN_SCALE, MAX_SCALE);
+
+                // Zoom toward pinch center
+                let scale_change = new_scale / current_scale;
+                let offset_x = state.offset_x.get_untracked();
+                let offset_y = state.offset_y.get_untracked();
+
+                state
+                    .offset_x
+                    .set(zoom_center_x - (zoom_center_x - offset_x) * scale_change);
+                state
+                    .offset_y
+                    .set(zoom_center_y - (zoom_center_y - offset_y) * scale_change);
+                state.scale.set(new_scale);
+            }
+
+            // Handle pan (two finger drag)
+            let dx = new_midpoint.0 - last_mid_x;
+            let dy = new_midpoint.1 - last_mid_y;
+            state.offset_x.update(|x| *x += dx);
+            state.offset_y.update(|y| *y += dy);
+
+            state.last_touch_distance.set(new_distance);
+            state.last_touch_midpoint.set(new_midpoint);
+        }
+    };
+
+    let on_touchend = move |e: TouchEvent| {
+        e.prevent_default();
+
+        let remaining_touches = e.touches().length();
+        state.touch_count.set(remaining_touches);
+
+        if remaining_touches == 0 {
+            // All fingers lifted - flush updates
+            if state.is_drawing.get_untracked() {
+                flush_pending_updates(state);
+            }
+            state.is_drawing.set(false);
+            state.is_pinching.set(false);
+            state.last_draw_col.set(None);
+            state.last_draw_row.set(None);
+        } else if remaining_touches == 1 && state.is_pinching.get_untracked() {
+            // Went from 2 fingers to 1 - stop pinching, could start drawing
+            state.is_pinching.set(false);
+        }
+    };
+
     let cursor_style = move || {
         if state.is_dragging.get() {
             "cursor: grabbing"
@@ -351,6 +530,10 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
             on:mouseup=on_mouseup
             on:mouseleave=on_mouseleave
             on:wheel=on_wheel
+            on:touchstart=on_touchstart
+            on:touchmove=on_touchmove
+            on:touchend=on_touchend
+            on:touchcancel=on_touchend
             style=cursor_style
         />
     }
