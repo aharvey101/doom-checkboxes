@@ -64,6 +64,11 @@ pub fn Header(state: AppState) -> impl IntoView {
             set_doom_running.set(false);
             state.status_message.set("Doom stopped".to_string());
         } else {
+            // Navigate to Doom location immediately so the user sees
+            // the doom area (with a pre-populated empty chunk) right away,
+            // before the Doom WASM binary finishes loading.
+            doom::go_to_doom_location(state);
+
             // Start Doom asynchronously
             let state_clone = state;
             wasm_bindgen_futures::spawn_local(async move {
@@ -71,8 +76,6 @@ pub fn Header(state: AppState) -> impl IntoView {
                     Ok(()) => {
                         set_doom_running.set(true);
                         state_clone.status_message.set("Doom running!".to_string());
-                        // Navigate to Doom location
-                        doom::go_to_doom_location(state_clone);
                     }
                     Err(e) => {
                         web_sys::console::error_1(&format!("Failed to start Doom: {}", e).into());

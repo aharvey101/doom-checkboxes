@@ -76,12 +76,23 @@ fn set_doom_container_visible(visible: bool) {
 
 /// Clear the Doom rendering area (chunk at offset 5, 5)
 fn clear_doom_chunks(state: &AppState) {
+    use crate::constants::CHUNK_DATA_SIZE;
+
     web_sys::console::log_1(&"Clearing Doom chunk...".into());
 
     // Calculate the chunk ID for the Doom area
     let chunk_x = CHUNK_OFFSET_X.div_euclid(CHUNK_SIZE as i32);
     let chunk_y = CHUNK_OFFSET_Y.div_euclid(CHUNK_SIZE as i32);
     let chunk_id = chunk_coords_to_id(chunk_x, chunk_y);
+
+    // Pre-populate loaded_chunks with an empty chunk so the canvas renders
+    // the doom area immediately (black grid) without waiting for SpacetimeDB
+    state.loaded_chunks.update(|chunks| {
+        chunks
+            .entry(chunk_id)
+            .or_insert_with(|| vec![0u8; CHUNK_DATA_SIZE]);
+    });
+    state.render_version.update(|v| *v += 1);
 
     // Create updates to clear all pixels in the Doom area
     let mut updates = Vec::new();
