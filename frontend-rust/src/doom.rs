@@ -10,9 +10,9 @@ use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
-// Constants matching jacobenget/doom.wasm (2x original Doom resolution)
-const DOOM_WIDTH: u32 = 640;
-const DOOM_HEIGHT: u32 = 400;
+// Constants matching original Doom resolution
+const DOOM_WIDTH: u32 = 320;
+const DOOM_HEIGHT: u32 = 200;
 const CHUNK_OFFSET_X: i32 = 5000;
 const CHUNK_OFFSET_Y: i32 = 5000;
 const CHUNK_SIZE: u32 = 1000;

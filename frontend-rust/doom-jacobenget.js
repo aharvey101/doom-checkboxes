@@ -43,9 +43,42 @@ class DoomJacobenget {
                         rgba[4*i+3] = 255;  // Alpha (fully opaque)
                     }
 
-                    // Call the frame callback with ImageData
-                    const imageData = new ImageData(rgba, this.doomWidth, this.doomHeight);
-                    this.onFrame(imageData);
+                    // WASM outputs 640x400, but we want 320x200 for checkboxes
+                    // Scale down by 2x using canvas
+                    const fullImageData = new ImageData(rgba, this.doomWidth, this.doomHeight);
+
+                    if (!this.scalingCanvas) {
+                        this.scalingCanvas = document.createElement('canvas');
+                        this.scalingCanvas.width = this.doomWidth / 2;
+                        this.scalingCanvas.height = this.doomHeight / 2;
+                        this.scalingCtx = this.scalingCanvas.getContext('2d');
+                    }
+
+                    // Create temp canvas with full resolution
+                    if (!this.tempCanvas) {
+                        this.tempCanvas = document.createElement('canvas');
+                        this.tempCanvas.width = this.doomWidth;
+                        this.tempCanvas.height = this.doomHeight;
+                        this.tempCtx = this.tempCanvas.getContext('2d');
+                    }
+
+                    // Draw full resolution to temp canvas
+                    this.tempCtx.putImageData(fullImageData, 0, 0);
+
+                    // Scale down to target resolution
+                    this.scalingCtx.drawImage(
+                        this.tempCanvas,
+                        0, 0, this.doomWidth, this.doomHeight,
+                        0, 0, this.doomWidth / 2, this.doomHeight / 2
+                    );
+
+                    // Get the scaled down image
+                    const scaledImageData = this.scalingCtx.getImageData(
+                        0, 0, this.doomWidth / 2, this.doomHeight / 2
+                    );
+
+                    // Call the frame callback with scaled ImageData
+                    this.onFrame(scaledImageData);
                 },
             },
             "runtimeControl": {

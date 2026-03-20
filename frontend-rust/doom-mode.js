@@ -8,9 +8,9 @@ window.DoomMode = (function() {
     let doomContainer = null;
     let previousFrame = null;
 
-    // Doom rendering constants - matches doom.rs and jacobenget/doom.wasm
-    const DOOM_WIDTH = 640;
-    const DOOM_HEIGHT = 400;
+    // Doom rendering constants - matches doom.rs (original Doom resolution)
+    const DOOM_WIDTH = 320;
+    const DOOM_HEIGHT = 200;
 
     // Bayer 4x4 dither matrix for converting grayscale to binary
     const BAYER_MATRIX = [
