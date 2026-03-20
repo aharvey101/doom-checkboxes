@@ -8,7 +8,8 @@ use web_sys::{MouseEvent, TouchEvent, WheelEvent};
 
 use crate::constants::*;
 use crate::db::{
-    flush_pending_updates, set_checkbox_checked, subscribe_to_chunks, toggle_checkbox,
+    flush_pending_updates, set_checkbox_checked, set_checkbox_unchecked, subscribe_to_chunks,
+    toggle_checkbox,
 };
 use crate::state::AppState;
 use crate::utils::{canvas_to_grid, visible_chunks};
@@ -57,6 +58,40 @@ fn line_cells(x0: i32, y0: i32, x1: i32, y1: i32) -> Vec<(i32, i32)> {
         if e2 < dx {
             err += dx;
             y += sy;
+        }
+    }
+
+    cells
+}
+
+/// Get all grid cells within a circle of given radius (in pixels) around a center point
+/// Returns cells within the brush area
+fn cells_in_radius(center_col: i32, center_row: i32, radius_pixels: f64, scale: f64) -> Vec<(i32, i32)> {
+    use crate::constants::CELL_SIZE;
+
+    if radius_pixels <= 0.0 {
+        return vec![(center_col, center_row)];
+    }
+
+    let cell_size = CELL_SIZE * scale;
+    let radius_cells = (radius_pixels / cell_size).ceil() as i32 + 1;
+
+    let mut cells = Vec::new();
+    let radius_sq = radius_pixels * radius_pixels;
+
+    for dy in -radius_cells..=radius_cells {
+        for dx in -radius_cells..=radius_cells {
+            let col = center_col + dx;
+            let row = center_row + dy;
+
+            // Calculate distance in pixels from center
+            let pixel_dx = dx as f64 * cell_size;
+            let pixel_dy = dy as f64 * cell_size;
+            let dist_sq = pixel_dx * pixel_dx + pixel_dy * pixel_dy;
+
+            if dist_sq <= radius_sq {
+                cells.push((col, row));
+            }
         }
     }
 
@@ -252,13 +287,36 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
                 state.last_draw_col.set(Some(col));
                 state.last_draw_row.set(Some(row));
 
-                if let Some(true) = set_checkbox_checked(state, col, row) {
-                    // Render immediately
-                    if let Some(ref r) = *renderer_for_draw.borrow() {
-                        let user_color = state.user_color.get_untracked();
-                        r.render_cell_immediate(
-                            &canvas, col, row, true, user_color, offset_x, offset_y, scale,
-                        );
+                // Check eraser mode and brush size
+                let eraser_mode = state.eraser_mode.get_untracked();
+                let brush_size = state.brush_size.get_untracked();
+
+                // Get all cells in brush radius
+                let cells = cells_in_radius(col, row, brush_size, scale);
+
+                // Fill or erase all cells in brush
+                for (c, r) in cells {
+                    let changed = if eraser_mode {
+                        set_checkbox_unchecked(state, c, r)
+                    } else {
+                        set_checkbox_checked(state, c, r)
+                    };
+
+                    if let Some(true) = changed {
+                        // Render immediately
+                        if let Some(ref renderer) = *renderer_for_draw.borrow() {
+                            let user_color = state.user_color.get_untracked();
+                            renderer.render_cell_immediate(
+                                &canvas,
+                                c,
+                                r,
+                                !eraser_mode,
+                                user_color,
+                                offset_x,
+                                offset_y,
+                                scale,
+                            );
+                        }
                     }
                 }
             }
@@ -294,20 +352,41 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
             let last_row = state.last_draw_row.get_untracked();
 
             // Get all cells along the line from last position to current
-            let cells = match (last_col, last_row) {
+            let line_points = match (last_col, last_row) {
                 (Some(lc), Some(lr)) if lc != col || lr != row => line_cells(lc, lr, col, row),
                 _ => vec![(col, row)],
             };
 
-            // Fill all cells along the line
-            for (c, r) in cells {
-                if let Some(true) = set_checkbox_checked(state, c, r) {
-                    // Render immediately
-                    if let Some(ref renderer) = *renderer_for_move.borrow() {
-                        let user_color = state.user_color.get_untracked();
-                        renderer.render_cell_immediate(
-                            &canvas, c, r, true, user_color, offset_x, offset_y, scale,
-                        );
+            // Get brush parameters
+            let eraser_mode = state.eraser_mode.get_untracked();
+            let brush_size = state.brush_size.get_untracked();
+
+            // For each point along the line, apply the brush
+            for (line_col, line_row) in line_points {
+                let cells = cells_in_radius(line_col, line_row, brush_size, scale);
+
+                for (c, r) in cells {
+                    let changed = if eraser_mode {
+                        set_checkbox_unchecked(state, c, r)
+                    } else {
+                        set_checkbox_checked(state, c, r)
+                    };
+
+                    if let Some(true) = changed {
+                        // Render immediately
+                        if let Some(ref renderer) = *renderer_for_move.borrow() {
+                            let user_color = state.user_color.get_untracked();
+                            renderer.render_cell_immediate(
+                                &canvas,
+                                c,
+                                r,
+                                !eraser_mode,
+                                user_color,
+                                offset_x,
+                                offset_y,
+                                scale,
+                            );
+                        }
                     }
                 }
             }
@@ -376,13 +455,35 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
             state.last_draw_col.set(Some(col));
             state.last_draw_row.set(Some(row));
 
-            // Fill the first checkbox
-            if let Some(true) = set_checkbox_checked(state, col, row) {
-                if let Some(ref r) = *renderer_for_touchstart.borrow() {
-                    let user_color = state.user_color.get_untracked();
-                    r.render_cell_immediate(
-                        &canvas, col, row, true, user_color, offset_x, offset_y, scale,
-                    );
+            // Get brush parameters
+            let eraser_mode = state.eraser_mode.get_untracked();
+            let brush_size = state.brush_size.get_untracked();
+
+            // Get all cells in brush radius
+            let cells = cells_in_radius(col, row, brush_size, scale);
+
+            // Fill or erase all cells in brush
+            for (c, r) in cells {
+                let changed = if eraser_mode {
+                    set_checkbox_unchecked(state, c, r)
+                } else {
+                    set_checkbox_checked(state, c, r)
+                };
+
+                if let Some(true) = changed {
+                    if let Some(ref renderer) = *renderer_for_touchstart.borrow() {
+                        let user_color = state.user_color.get_untracked();
+                        renderer.render_cell_immediate(
+                            &canvas,
+                            c,
+                            r,
+                            !eraser_mode,
+                            user_color,
+                            offset_x,
+                            offset_y,
+                            scale,
+                        );
+                    }
                 }
             }
         } else if touch_count == 2 {
@@ -424,19 +525,40 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
             let last_row = state.last_draw_row.get_untracked();
 
             // Get all cells along the line
-            let cells = match (last_col, last_row) {
+            let line_points = match (last_col, last_row) {
                 (Some(lc), Some(lr)) if lc != col || lr != row => line_cells(lc, lr, col, row),
                 _ => vec![(col, row)],
             };
 
-            // Fill all cells
-            for (c, r) in cells {
-                if let Some(true) = set_checkbox_checked(state, c, r) {
-                    if let Some(ref renderer) = *renderer_for_touchmove.borrow() {
-                        let user_color = state.user_color.get_untracked();
-                        renderer.render_cell_immediate(
-                            &canvas, c, r, true, user_color, offset_x, offset_y, scale,
-                        );
+            // Get brush parameters
+            let eraser_mode = state.eraser_mode.get_untracked();
+            let brush_size = state.brush_size.get_untracked();
+
+            // For each point along the line, apply the brush
+            for (line_col, line_row) in line_points {
+                let cells = cells_in_radius(line_col, line_row, brush_size, scale);
+
+                for (c, r) in cells {
+                    let changed = if eraser_mode {
+                        set_checkbox_unchecked(state, c, r)
+                    } else {
+                        set_checkbox_checked(state, c, r)
+                    };
+
+                    if let Some(true) = changed {
+                        if let Some(ref renderer) = *renderer_for_touchmove.borrow() {
+                            let user_color = state.user_color.get_untracked();
+                            renderer.render_cell_immediate(
+                                &canvas,
+                                c,
+                                r,
+                                !eraser_mode,
+                                user_color,
+                                offset_x,
+                                offset_y,
+                                scale,
+                            );
+                        }
                     }
                 }
             }

@@ -350,6 +350,54 @@ pub fn set_checkbox_checked(state: AppState, col: i32, row: i32) -> Option<bool>
     Some(true) // Changed from unchecked to checked
 }
 
+/// Set a checkbox to unchecked at the given grid position (for eraser tool)
+/// Returns true if the checkbox was changed (was checked), false if already unchecked
+/// Note: This queues the update for batching instead of sending immediately
+pub fn set_checkbox_unchecked(state: AppState, col: i32, row: i32) -> Option<bool> {
+    let (chunk_x, chunk_y) = grid_to_chunk_coords(col, row);
+    let chunk_id = chunk_coords_to_id(chunk_x, chunk_y);
+    let (local_col, local_row) = grid_to_local(col, row);
+    let cell_offset = local_to_cell_offset(local_col, local_row) as usize;
+
+    // Get user color (even though we're unchecking, keep color for consistency)
+    let (r, g, b) = state.user_color.get_untracked();
+
+    // Ensure chunk exists locally (create empty chunk if needed)
+    state.loaded_chunks.update(|chunks| {
+        chunks
+            .entry(chunk_id)
+            .or_insert_with(|| vec![0u8; CHUNK_DATA_SIZE]);
+    });
+
+    // Get current value
+    let current_value = state.loaded_chunks.with_untracked(|chunks| {
+        chunks
+            .get(&chunk_id)
+            .map(|data| is_checked(data, cell_offset))
+            .unwrap_or(false)
+    });
+
+    // Only update if currently checked
+    if !current_value {
+        return Some(false); // Already unchecked, no change
+    }
+
+    // Optimistic update - uncheck it
+    state.loaded_chunks.update(|chunks| {
+        if let Some(data) = chunks.get_mut(&chunk_id) {
+            set_checkbox(data, cell_offset, r, g, b, false);
+        }
+    });
+
+    // Queue update for batching
+    // PendingUpdate = (chunk_id, cell_offset, r, g, b, checked)
+    state.pending_updates.update(|updates| {
+        updates.push((chunk_id, cell_offset as u32, r, g, b, false));
+    });
+
+    Some(true) // Changed from checked to unchecked
+}
+
 /// Flush pending updates to the server as a batch
 /// This should be called on mouseup or after a debounce timer
 pub fn flush_pending_updates(state: AppState) {

@@ -1,6 +1,7 @@
 # Rust build artifacts
 /target/
 frontend-rust/target/
+backend/target/
 Cargo.lock
 
 # Node.js dependencies

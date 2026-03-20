@@ -69,6 +69,10 @@ pub struct AppState {
     pub last_touch_distance: RwSignal<f64>, // For pinch zoom
     pub last_touch_midpoint: RwSignal<(f64, f64)>, // For two-finger pan
     pub is_pinching: RwSignal<bool>,        // Two-finger gesture active
+
+    // Tool mode
+    pub eraser_mode: RwSignal<bool>,        // When true, drawing clears instead of fills
+    pub brush_size: RwSignal<f64>,          // Brush/eraser radius in pixels
 }
 
 impl AppState {
@@ -99,6 +103,8 @@ impl AppState {
             last_touch_distance: RwSignal::new(0.0),
             last_touch_midpoint: RwSignal::new((0.0, 0.0)),
             is_pinching: RwSignal::new(false),
+            eraser_mode: RwSignal::new(false),
+            brush_size: RwSignal::new(10.0),
         }
     }
 }
