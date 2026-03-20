@@ -1,20 +1,15 @@
 //! Database integration module
 //!
-//! This module bridges the SpacetimeDB WebSocket client with Leptos reactive state.
+//! This module handles checkbox state management and integrates with the worker bridge.
 //! It handles:
-//! - Connection lifecycle
 //! - Deserializing CheckboxChunk rows from BSATN
-//! - Updating Leptos signals when data arrives
-//! - Sending reducer calls for checkbox toggles
+//! - Optimistic updates for immediate UI feedback
+//! - Sending updates to worker for server synchronization
 
 use crate::constants::CHUNK_DATA_SIZE;
-use crate::state::{AppState, ConnectionStatus, PendingUpdate};
+use crate::state::AppState;
 use crate::utils::{chunk_coords_to_id, grid_to_chunk_coords, grid_to_local};
-use crate::ws_client::{call_reducer, connect, subscribe, SharedClient, SpacetimeClient};
 use leptos::prelude::*;
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use crate::constants::CHUNK_SIZE;
 
 /// CheckboxChunk row structure matching the backend schema
@@ -111,146 +106,12 @@ pub fn local_to_cell_offset(local_col: u32, local_row: u32) -> u32 {
     local_row * CHUNK_SIZE + local_col
 }
 
-// Global client storage - we use thread_local for WASM safety
-thread_local! {
-    static CLIENT: RefCell<Option<SharedClient>> = const { RefCell::new(None) };
-}
-
-/// Store the client reference
-fn set_client(client: SharedClient) {
-    CLIENT.with(|c| {
-        *c.borrow_mut() = Some(client);
-    });
-}
-
-/// Get a clone of the client reference
-fn get_client() -> Option<SharedClient> {
-    CLIENT.with(|c| c.borrow().clone())
-}
-
-/// Initialize the database connection
-pub fn init_connection(state: AppState) {
-    let uri = get_spacetimedb_uri();
-    let database = "checkboxes".to_string();
-
-    web_sys::console::log_1(&format!("Connecting to SpacetimeDB at {}", uri).into());
-
-    // Update status
-    state
-        .status_message
-        .set(format!("Connecting to {}...", uri));
-
-    // Create client
-    let client = Rc::new(RefCell::new(SpacetimeClient::new()));
-
-    // Store client for later use
-    set_client(client.clone());
-
-    // Set up callbacks
-    {
-        let mut client_mut = client.borrow_mut();
-
-        // On connect callback
-        let state_connect = state;
-        client_mut.on_connect(Box::new(move |_identity, _token| {
-            web_sys::console::log_1(&"Connected to SpacetimeDB, subscribing...".into());
-            state_connect.status.set(ConnectionStatus::Connecting);
-            state_connect
-                .status_message
-                .set("Subscribing...".to_string());
-
-            // Subscribe to checkbox_chunk table
-            if let Some(client) = get_client() {
-                subscribe(&client, &["SELECT * FROM checkbox_chunk"]);
-            }
-        }));
-
-        // On disconnect callback
-        let state_disconnect = state;
-        client_mut.on_disconnect(Box::new(move || {
-            web_sys::console::log_1(&"Disconnected from SpacetimeDB".into());
-            state_disconnect.status.set(ConnectionStatus::Error);
-            state_disconnect
-                .status_message
-                .set("Disconnected".to_string());
-        }));
-
-        // On error callback
-        let state_error = state;
-        client_mut.on_error(Box::new(move |error| {
-            web_sys::console::error_1(&format!("SpacetimeDB error: {}", error).into());
-            state_error.status.set(ConnectionStatus::Error);
-            state_error.status_message.set(format!("Error: {}", error));
-        }));
-
-        // On subscription applied
-        let state_sub = state;
-        client_mut.on_subscribe_applied(Box::new(move || {
-            web_sys::console::log_1(&"Subscription applied".into());
-            state_sub.status.set(ConnectionStatus::Connected);
-            state_sub.status_message.set("Connected".to_string());
-        }));
-
-        // On chunk insert (initial data load)
-        let state_insert = state;
-        client_mut.on_chunk_insert(Box::new(move |row_bytes: &[u8]| {
-            if let Some(chunk) = CheckboxChunk::from_bsatn(row_bytes) {
-                web_sys::console::log_1(
-                    &format!(
-                        "Chunk {} received, {} bytes, version {}",
-                        chunk.chunk_id,
-                        chunk.state.len(),
-                        chunk.version
-                    )
-                    .into(),
-                );
-
-                // Store chunk data
-                state_insert.loaded_chunks.update(|chunks| {
-                    chunks.insert(chunk.chunk_id, chunk.state);
-                });
-
-                // Mark as no longer loading, add to subscribed
-                state_insert.loading_chunks.update(|loading| {
-                    loading.remove(&chunk.chunk_id);
-                });
-                state_insert.subscribed_chunks.update(|subs| {
-                    subs.insert(chunk.chunk_id);
-                });
-
-                // Trigger render
-                state_insert.render_version.update(|v| *v += 1);
-            }
-        }));
-
-        // On chunk update (state changes from other clients)
-        let state_update = state;
-        client_mut.on_chunk_update(Box::new(move |_old_bytes: &[u8], new_bytes: &[u8]| {
-            if let Some(chunk) = CheckboxChunk::from_bsatn(new_bytes) {
-                // Check if we have this chunk loaded (don't compare data - too expensive for large chunks)
-                let have_chunk = state_update
-                    .loaded_chunks
-                    .with_untracked(|chunks| chunks.contains_key(&chunk.chunk_id));
-
-                if have_chunk {
-                    // Update the chunk data
-                    state_update.loaded_chunks.update(|chunks| {
-                        chunks.insert(chunk.chunk_id, chunk.state);
-                    });
-                    // Trigger re-render
-                    state_update.render_version.update(|v| *v += 1);
-                }
-            }
-        }));
-    }
-
-    // Connect
-    connect(client, &uri, &database);
-}
-
 /// Toggle a checkbox at the given grid position (signed coords for infinite grid)
 /// Returns the new checked state for immediate visual feedback
 pub fn toggle_checkbox(state: AppState, col: i32, row: i32) -> Option<bool> {
+    use crate::worker_bridge::send_to_worker;
+    use crate::worker_protocol::MainToWorker;
+
     let (chunk_x, chunk_y) = grid_to_chunk_coords(col, row);
     let chunk_id = chunk_coords_to_id(chunk_x, chunk_y);
     let (local_col, local_row) = grid_to_local(col, row);
@@ -259,7 +120,7 @@ pub fn toggle_checkbox(state: AppState, col: i32, row: i32) -> Option<bool> {
     // Get user color
     let (r, g, b) = state.user_color.get_untracked();
 
-    // Ensure chunk exists locally (create empty chunk if needed)
+    // Ensure chunk exists locally
     state.loaded_chunks.update(|chunks| {
         chunks
             .entry(chunk_id)
@@ -275,19 +136,23 @@ pub fn toggle_checkbox(state: AppState, col: i32, row: i32) -> Option<bool> {
     });
     let new_value = !current_value;
 
-    // Optimistic update - set with user's color
+    // Optimistic update - immediate UI feedback
+    // (Server will reconcile when update comes back)
     state.loaded_chunks.update(|chunks| {
         if let Some(data) = chunks.get_mut(&chunk_id) {
             set_checkbox(data, cell_offset, r, g, b, new_value);
         }
     });
 
-    // Send to server
-    if let Some(client) = get_client() {
-        // Encode reducer arguments: (chunk_id: i64, cell_offset: u32, r: u8, g: u8, b: u8, checked: bool)
-        let args = encode_update_checkbox_args(chunk_id, cell_offset as u32, r, g, b, new_value);
-        call_reducer(&client, "update_checkbox", &args);
-    }
+    // Send to worker (non-blocking - worker handles connection state)
+    send_to_worker(MainToWorker::UpdateCheckbox {
+        chunk_id,
+        cell_offset: cell_offset as u32,
+        r,
+        g,
+        b,
+        checked: new_value,
+    });
 
     Some(new_value)
 }
@@ -391,6 +256,9 @@ pub fn set_checkbox_unchecked(state: AppState, col: i32, row: i32) -> Option<boo
 /// Flush pending updates to the server as a batch
 /// This should be called on mouseup or after a debounce timer
 pub fn flush_pending_updates(state: AppState) {
+    use crate::worker_bridge::send_to_worker;
+    use crate::worker_protocol::MainToWorker;
+
     // Take all pending updates atomically
     let updates = state.pending_updates.with_untracked(|u| u.clone());
     if updates.is_empty() {
@@ -402,122 +270,14 @@ pub fn flush_pending_updates(state: AppState) {
 
     web_sys::console::log_1(&format!("Flushing {} pending updates", updates.len()).into());
 
-    // Send batch to server
-    if let Some(client) = get_client() {
-        let args = encode_batch_update_args(&updates);
-        call_reducer(&client, "batch_update_checkboxes", &args);
-    }
-}
-
-/// Encode arguments for batch_update_checkboxes reducer
-/// Format: length-prefixed array of CheckboxUpdate { chunk_id: i64, cell_offset: u32, r: u8, g: u8, b: u8, checked: bool }
-fn encode_batch_update_args(updates: &[PendingUpdate]) -> Vec<u8> {
-    // BSATN encoding for Vec<CheckboxUpdate>
-    // Vec is encoded as: length (u32) followed by elements
-    // Each element is encoded as: i64 + u32 + u8 + u8 + u8 + bool = 16 bytes
-    let mut buf = Vec::with_capacity(4 + updates.len() * 16);
-
-    // Array length (u32, little-endian)
-    buf.extend_from_slice(&(updates.len() as u32).to_le_bytes());
-
-    // Each update: (chunk_id, cell_offset, r, g, b, checked)
-    for (chunk_id, cell_offset, r, g, b, checked) in updates {
-        buf.extend_from_slice(&chunk_id.to_le_bytes());
-        buf.extend_from_slice(&cell_offset.to_le_bytes());
-        buf.push(*r);
-        buf.push(*g);
-        buf.push(*b);
-        buf.push(if *checked { 1 } else { 0 });
-    }
-
-    buf
-}
-
-/// Encode arguments for update_checkbox reducer
-/// Format: CheckboxUpdate { chunk_id: i64, cell_offset: u32, r: u8, g: u8, b: u8, checked: bool }
-fn encode_update_checkbox_args(
-    chunk_id: i64,
-    cell_offset: u32,
-    r: u8,
-    g: u8,
-    b: u8,
-    checked: bool,
-) -> Vec<u8> {
-    // BSATN encoding: product type with six fields
-    // i64 + u32 + u8 + u8 + u8 + bool = 16 bytes
-    let mut buf = Vec::with_capacity(16);
-
-    // chunk_id: i64 (little-endian)
-    buf.extend_from_slice(&chunk_id.to_le_bytes());
-
-    // cell_offset: u32 (little-endian)
-    buf.extend_from_slice(&cell_offset.to_le_bytes());
-
-    // r: u8
-    buf.push(r);
-
-    // g: u8
-    buf.push(g);
-
-    // b: u8
-    buf.push(b);
-
-    // checked: bool (1 byte)
-    buf.push(if checked { 1 } else { 0 });
-
-    buf
+    // Send to worker
+    send_to_worker(MainToWorker::BatchUpdate { updates });
 }
 
 /// Subscribe to a set of chunks by their coordinates
-pub fn subscribe_to_chunks(state: AppState, chunks: Vec<(i32, i32)>) {
-    if let Some(client) = get_client() {
-        for (chunk_x, chunk_y) in chunks {
-            let chunk_id = chunk_coords_to_id(chunk_x, chunk_y);
-
-            // Skip if already subscribed or loading
-            if state
-                .subscribed_chunks
-                .with_untracked(|s| s.contains(&chunk_id))
-            {
-                continue;
-            }
-            if state
-                .loading_chunks
-                .with_untracked(|l| l.contains(&chunk_id))
-            {
-                continue;
-            }
-
-            // Mark as loading
-            state.loading_chunks.update(|loading| {
-                loading.insert(chunk_id);
-            });
-
-            // Subscribe via SpacetimeDB
-            let query = format!("SELECT * FROM checkbox_chunk WHERE chunk_id = {}", chunk_id);
-            subscribe(&client, &[&query]);
-
-            web_sys::console::log_1(
-                &format!(
-                    "Subscribing to chunk ({}, {}) id={}",
-                    chunk_x, chunk_y, chunk_id
-                )
-                .into(),
-            );
-        }
-    }
-}
-
-/// Get the SpacetimeDB URI based on environment
-fn get_spacetimedb_uri() -> String {
-    // Check if we're running locally
-    let window = web_sys::window().expect("no window");
-    let location = window.location();
-    let hostname = location.hostname().unwrap_or_default();
-
-    if hostname == "localhost" || hostname == "127.0.0.1" {
-        "ws://127.0.0.1:3000".to_string()
-    } else {
-        "wss://maincloud.spacetimedb.com".to_string()
-    }
+/// NOTE: In worker architecture, subscription is handled automatically by the worker
+/// This function is kept for compatibility but does nothing
+pub fn subscribe_to_chunks(_state: AppState, _chunks: Vec<(i32, i32)>) {
+    // Worker handles all subscriptions automatically
+    // This function exists for API compatibility only
 }

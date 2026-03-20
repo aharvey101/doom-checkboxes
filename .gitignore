@@ -22,6 +22,9 @@ build/
 *.swp
 *.swo
 
+# Images
+*.png
+
 # OS files
 .DS_Store
 Thumbs.db

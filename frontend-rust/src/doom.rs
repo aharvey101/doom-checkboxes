@@ -17,10 +17,14 @@ const CHUNK_OFFSET_X: i32 = 5000;
 const CHUNK_OFFSET_Y: i32 = 5000;
 const CHUNK_SIZE: u32 = 1000;
 
+// How many doom frames to accumulate before flushing to SpacetimeDB
+const BATCH_FRAMES: u32 = 3;
+
 // Thread-local storage for the callback closure
 thread_local! {
     static FRAME_CALLBACK: RefCell<Option<Closure<dyn FnMut(js_sys::Uint32Array, js_sys::Uint8Array, u32, u32, i32, i32)>>> = const { RefCell::new(None) };
     static DOOM_STATE: RefCell<Option<AppState>> = const { RefCell::new(None) };
+    static FRAME_COUNTER: RefCell<u32> = const { RefCell::new(0) };
 }
 
 /// JavaScript bindings for DoomMode
@@ -185,6 +189,27 @@ pub fn stop_doom_mode() {
     });
 }
 
+/// Returns true if the given chunk_id is one of the chunks doom renders into.
+/// SpacetimeDB updates for these chunks should be ignored while doom is running
+/// to avoid overwriting optimistic frames with stale server data.
+pub fn is_doom_chunk(chunk_id: i64) -> bool {
+    use crate::utils::chunk_coords_to_id;
+    // Doom renders into the chunk(s) covered by its pixel area.
+    // With CHUNK_OFFSET (5000,5000) and size 640x400, all pixels land in chunk (5,5).
+    let min_cx = CHUNK_OFFSET_X.div_euclid(CHUNK_SIZE as i32);
+    let max_cx = (CHUNK_OFFSET_X + DOOM_WIDTH as i32 - 1).div_euclid(CHUNK_SIZE as i32);
+    let min_cy = CHUNK_OFFSET_Y.div_euclid(CHUNK_SIZE as i32);
+    let max_cy = (CHUNK_OFFSET_Y + DOOM_HEIGHT as i32 - 1).div_euclid(CHUNK_SIZE as i32);
+    for cx in min_cx..=max_cx {
+        for cy in min_cy..=max_cy {
+            if chunk_coords_to_id(cx, cy) == chunk_id {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Check if Doom mode is currently running
 pub fn is_doom_running() -> bool {
     if is_doom_available() {
@@ -217,8 +242,6 @@ fn handle_doom_frame_delta(
     offset_x: i32,
     offset_y: i32,
 ) {
-    let t0 = js_sys::Date::now();
-
     // Get state
     let state = DOOM_STATE.with(|s| s.borrow().clone());
     let Some(state) = state else {
@@ -229,32 +252,22 @@ fn handle_doom_frame_delta(
     let indices_vec: Vec<u32> = indices.to_vec();
     let color_vec: Vec<u8> = color_data.to_vec();
 
-    let _t1 = js_sys::Date::now();
-
     let mut updates = Vec::with_capacity(indices_vec.len());
 
     for (i, &pixel_idx) in indices_vec.iter().enumerate() {
-        // Unpack color data: [r, g, b, checked, r, g, b, checked, ...]
         let color_idx = i * 4;
         let r = color_vec.get(color_idx).copied().unwrap_or(0);
         let g = color_vec.get(color_idx + 1).copied().unwrap_or(0);
         let b = color_vec.get(color_idx + 2).copied().unwrap_or(0);
         let is_checked = color_vec.get(color_idx + 3).copied().unwrap_or(0) != 0;
 
-        // Convert linear index to x,y
         let x = (pixel_idx % width) as i32;
         let y = (pixel_idx / width) as i32;
-
-        // Calculate global grid position
         let grid_x = offset_x + x;
         let grid_y = offset_y + y;
-
-        // Calculate chunk coordinates
         let chunk_x = grid_x.div_euclid(CHUNK_SIZE as i32);
         let chunk_y = grid_y.div_euclid(CHUNK_SIZE as i32);
         let chunk_id = chunk_coords_to_id(chunk_x, chunk_y);
-
-        // Calculate local position within chunk
         let local_x = grid_x.rem_euclid(CHUNK_SIZE as i32) as u32;
         let local_y = grid_y.rem_euclid(CHUNK_SIZE as i32) as u32;
         let cell_offset = local_y * CHUNK_SIZE + local_x;
@@ -262,30 +275,35 @@ fn handle_doom_frame_delta(
         updates.push((chunk_id, cell_offset, r, g, b, is_checked));
     }
 
-    let t2 = js_sys::Date::now();
-
     if updates.is_empty() {
         return;
     }
 
-    let t2_5 = js_sys::Date::now();
+    // Optimistic render: apply directly to loaded_chunks so the canvas updates immediately
+    // without waiting for the SpacetimeDB round-trip
+    state.loaded_chunks.update(|chunks| {
+        use crate::constants::CHUNK_DATA_SIZE;
+        for &(chunk_id, cell_offset, r, g, b, checked) in &updates {
+            let data = chunks.entry(chunk_id).or_insert_with(|| vec![0u8; CHUNK_DATA_SIZE]);
+            crate::db::set_checkbox(data, cell_offset as usize, r, g, b, checked);
+        }
+    });
+    state.render_version.update(|v| *v += 1);
 
-    // Send batch update to server for shared multiplayer Doom
-    state.pending_updates.update(|pending| {
-        pending.extend(updates.clone());
+    // Batch SpacetimeDB sends: only flush every BATCH_FRAMES frames to reduce server load
+    let should_flush = FRAME_COUNTER.with(|c| {
+        let count = c.borrow().wrapping_add(1);
+        *c.borrow_mut() = count;
+        count % BATCH_FRAMES == 0
     });
 
-    let t3 = js_sys::Date::now();
+    state.pending_updates.update(|pending| {
+        pending.extend(updates);
+    });
 
-    // Flush to database immediately
-    crate::db::flush_pending_updates(state);
-
-    let t4 = js_sys::Date::now();
-
-    web_sys::console::log_1(&format!(
-        "Rust delta: {} changes, local_update={:.0}ms, render={:.0}ms, total={:.0}ms (NO SERVER)",
-        indices_vec.len(), t3 - t2, t4 - t3, t4 - t0
-    ).into());
+    if should_flush {
+        crate::db::flush_pending_updates(state);
+    }
 }
 
 // Keep the old function for reference but it's no longer used

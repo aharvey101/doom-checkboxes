@@ -9,8 +9,22 @@
     <link data-trunk rel="copy-file" href="doom.wasm" />
     <link data-trunk rel="copy-file" href="doom-jacobenget.js" />
     <link data-trunk rel="copy-file" href="doom-mode.js" />
+    <!-- Worker files -->
+    <link data-trunk rel="copy-dir" href="pkg/worker" />
+    <link data-trunk rel="copy-file" href="worker-loader.js" />
     <script src="doom-jacobenget.js"></script>
     <script src="doom-mode.js"></script>
+    <script>
+        // Expose test functions to window for e2e tests
+        window.addEventListener('TrunkApplicationStarted', () => {
+            if (window.wasmBindings && window.wasmBindings.test_send_batch_update) {
+                window.test_send_batch_update = window.wasmBindings.test_send_batch_update;
+            }
+            if (window.wasmBindings && window.wasmBindings.get_render_version) {
+                window.get_render_version = window.wasmBindings.get_render_version;
+            }
+        });
+    </script>
 </head>
 <body>
     <div id="app"></div>
