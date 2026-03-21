@@ -145,11 +145,13 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
                     }
 
                     if let Some(ref r) = *renderer_borrow {
-                        let loaded_chunks = state_copy.loaded_chunks.get_untracked();
                         let offset_x = state_copy.offset_x.get_untracked();
                         let offset_y = state_copy.offset_y.get_untracked();
                         let scale = state_copy.scale.get_untracked();
-                        r.render(&canvas, &loaded_chunks, offset_x, offset_y, scale);
+                        // Use with_untracked to avoid cloning the entire HashMap (36MB+)
+                        state_copy.loaded_chunks.with_untracked(|loaded_chunks| {
+                            r.render(&canvas, loaded_chunks, offset_x, offset_y, scale);
+                        });
                     }
                 }
             }) as Box<dyn FnOnce()>);
@@ -171,9 +173,9 @@ pub fn CheckboxCanvas(state: AppState) -> impl IntoView {
         let _ = state.offset_x.get();
         let _ = state.offset_y.get();
         let _ = state.scale.get();
-        // Track chunk data changes
-        let _ = state.loaded_chunks.get();
-        // Track server updates (incremented when server sends new data)
+        // Track server updates and chunk changes via render_version
+        // (do NOT track loaded_chunks.get() here — it clones the entire HashMap
+        // which contains 4MB+ Vec<u8> per chunk, causing massive allocations on every frame)
         let _ = state.render_version.get();
 
         request_render_effect();

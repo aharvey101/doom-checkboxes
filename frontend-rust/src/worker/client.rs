@@ -141,18 +141,25 @@ impl WorkerClient {
         self.ws = Some(ws);
     }
 
-    /// Subscribe to checkbox_chunk table
+    /// Subscribe to checkbox_chunk (initial load) and checkbox_delta (live updates)
     pub fn subscribe(&mut self) {
+        // Subscribe to full chunk state for initial load
         let request_id = self.next_request_id();
-
-        let subscribe = Subscribe {
+        let subscribe_chunks = Subscribe {
             request_id,
             query_set_id: QuerySetId::new(request_id),
             query_strings: vec!["SELECT * FROM checkbox_chunk".into()].into_boxed_slice(),
         };
+        self.send_message(&ClientMessage::Subscribe(subscribe_chunks));
 
-        let message = ClientMessage::Subscribe(subscribe);
-        self.send_message(&message);
+        // Subscribe to delta table for real-time updates
+        let request_id2 = self.next_request_id();
+        let subscribe_deltas = Subscribe {
+            request_id: request_id2,
+            query_set_id: QuerySetId::new(request_id2),
+            query_strings: vec!["SELECT * FROM checkbox_delta".into()].into_boxed_slice(),
+        };
+        self.send_message(&ClientMessage::Subscribe(subscribe_deltas));
     }
 
     /// Send BSATN-encoded reducer call
@@ -300,6 +307,8 @@ fn parse_spacetimedb_message(bytes: &[u8]) {
         return;
     }
 
+    let t0 = js_sys::Date::now();
+
     // First byte is compression tag
     let compression_tag = bytes[0];
     let message_bytes = &bytes[1..];
@@ -329,6 +338,8 @@ fn parse_spacetimedb_message(bytes: &[u8]) {
         }
     };
 
+    let t1 = js_sys::Date::now();
+
     // Deserialize the server message
     let message: ServerMessage = match bsatn::from_slice(&decompressed) {
         Ok(msg) => msg,
@@ -337,6 +348,18 @@ fn parse_spacetimedb_message(bytes: &[u8]) {
             return;
         }
     };
+
+    let t2 = js_sys::Date::now();
+
+    // Log timing for chunk-sized messages
+    let compressed_kb = bytes.len() / 1024;
+    let decompressed_kb = decompressed.len() / 1024;
+    if decompressed_kb > 100 {
+        web_sys::console::log_1(&format!(
+            "[PERF worker] decompress={:.0}ms bsatn_parse={:.0}ms | {}KB -> {}KB",
+            t1 - t0, t2 - t1, compressed_kb, decompressed_kb
+        ).into());
+    }
 
     // Handle the message
     handle_server_message(message);
@@ -437,19 +460,18 @@ fn process_query_rows(rows: &QueryRows) {
     for table_rows in rows.tables.iter() {
         let table_name: &str = &table_rows.table;
 
-        if table_name != "checkbox_chunk" {
-            continue;
-        }
-
-        for row_bytes in &table_rows.rows {
-            if let Some(chunk) = parse_checkbox_chunk(&row_bytes) {
-                send_to_main_thread(WorkerToMain::ChunkInserted {
-                    chunk_id: chunk.chunk_id,
-                    state: chunk.state,
-                    version: chunk.version,
-                });
+        if table_name == "checkbox_chunk" {
+            for row_bytes in &table_rows.rows {
+                if let Some(chunk) = parse_checkbox_chunk(&row_bytes) {
+                    send_to_main_thread(WorkerToMain::ChunkInserted {
+                        chunk_id: chunk.chunk_id,
+                        state: chunk.state,
+                        version: chunk.version,
+                    });
+                }
             }
         }
+        // Ignore initial checkbox_delta rows — we only care about live inserts
     }
 }
 
@@ -457,15 +479,18 @@ fn process_query_rows(rows: &QueryRows) {
 fn process_table_update(table: &TableUpdate) {
     let table_name: &str = &table.table_name;
 
-    // We only care about checkbox_chunk table
-    if table_name != "checkbox_chunk" {
-        return;
+    if table_name == "checkbox_chunk" {
+        process_chunk_table_update(table);
+    } else if table_name == "checkbox_delta" {
+        process_delta_table_update(table);
     }
+}
 
+/// Process checkbox_chunk table updates (full chunk state)
+fn process_chunk_table_update(table: &TableUpdate) {
     for rows in table.rows.iter() {
         match rows {
             TableUpdateRows::PersistentTable(persistent) => {
-                // Process inserts
                 for row_bytes in &persistent.inserts {
                     if let Some(chunk) = parse_checkbox_chunk(&row_bytes) {
                         send_to_main_thread(WorkerToMain::ChunkInserted {
@@ -475,20 +500,67 @@ fn process_table_update(table: &TableUpdate) {
                         });
                     }
                 }
+            }
+            _ => {}
+        }
+    }
+}
 
-                // Process deletes (not typically used in our app)
-                for row_bytes in &persistent.deletes {
-                    if let Some(chunk) = parse_checkbox_chunk(&row_bytes) {
-                        web_sys::console::log_1(
-                            &format!("Chunk deleted: {}", chunk.chunk_id).into()
-                        );
+/// Process checkbox_delta table updates — send as lightweight binary to main thread.
+/// Binary format: [tag: u8 = 3] [N × 16 bytes: chunk_id(8) + cell_offset(4) + r + g + b + checked]
+fn process_delta_table_update(table: &TableUpdate) {
+    let mut deltas: Vec<u8> = Vec::new();
+    let mut count = 0u32;
+
+    for rows in table.rows.iter() {
+        match rows {
+            TableUpdateRows::PersistentTable(persistent) => {
+                for row_bytes in &persistent.inserts {
+                    if let Some(delta) = parse_checkbox_delta(&row_bytes) {
+                        deltas.extend_from_slice(&delta.chunk_id.to_le_bytes());
+                        deltas.extend_from_slice(&delta.cell_offset.to_le_bytes());
+                        deltas.push(delta.r);
+                        deltas.push(delta.g);
+                        deltas.push(delta.b);
+                        deltas.push(if delta.checked { 1 } else { 0 });
+                        count += 1;
                     }
                 }
             }
-            TableUpdateRows::EventTable(_) => {
-                // Not applicable for checkbox_chunk
-            }
+            _ => {}
         }
+    }
+
+    if count == 0 {
+        return;
+    }
+
+    // Send as binary: [tag=3] [count: u32] [deltas...]
+    let scope = js_sys::global()
+        .dyn_into::<DedicatedWorkerGlobalScope>()
+        .expect("not in worker");
+
+    let total_len = 1 + 4 + deltas.len();
+    let buffer = js_sys::ArrayBuffer::new(total_len as u32);
+    let view = js_sys::Uint8Array::new(&buffer);
+
+    let mut header = [0u8; 5];
+    header[0] = 3; // tag for DeltaBatch
+    header[1..5].copy_from_slice(&count.to_le_bytes());
+    view.set(&js_sys::Uint8Array::from(&header[..]), 0);
+
+    let delta_view = unsafe { js_sys::Uint8Array::view(&deltas) };
+    view.set(&delta_view, 5);
+
+    let transfer = js_sys::Array::new();
+    transfer.push(&buffer);
+    scope.post_message_with_transfer(&buffer, &transfer).expect("postMessage failed");
+
+    if count > 100 {
+        web_sys::console::log_1(&format!(
+            "[PERF worker->main] delta_batch {} deltas ({}KB)",
+            count, deltas.len() / 1024
+        ).into());
     }
 }
 
@@ -539,6 +611,52 @@ struct CheckboxChunk {
     version: u64,
 }
 
+/// Parse a single CheckboxDelta from BSATN
+/// Fields: seq(u64) + chunk_id(i64) + cell_offset(u32) + r(u8) + g(u8) + b(u8) + checked(bool)
+fn parse_checkbox_delta(bytes: &[u8]) -> Option<CheckboxDelta> {
+    if bytes.len() < 8 + 8 + 4 + 1 + 1 + 1 + 1 {
+        return None;
+    }
+    let mut reader = bytes;
+
+    // seq: u64
+    let seq = u64::from_le_bytes(reader[..8].try_into().ok()?);
+    reader = &reader[8..];
+
+    // chunk_id: i64
+    let chunk_id = i64::from_le_bytes(reader[..8].try_into().ok()?);
+    reader = &reader[8..];
+
+    // cell_offset: u32
+    let cell_offset = u32::from_le_bytes(reader[..4].try_into().ok()?);
+    reader = &reader[4..];
+
+    let r = reader[0];
+    let g = reader[1];
+    let b = reader[2];
+    let checked = reader[3] != 0;
+
+    Some(CheckboxDelta {
+        seq,
+        chunk_id,
+        cell_offset,
+        r,
+        g,
+        b,
+        checked,
+    })
+}
+
+struct CheckboxDelta {
+    seq: u64,
+    chunk_id: i64,
+    cell_offset: u32,
+    r: u8,
+    g: u8,
+    b: u8,
+    checked: bool,
+}
+
 /// Handle WebSocket close
 fn handle_ws_close() {
     with_client(|client| {
@@ -546,15 +664,71 @@ fn handle_ws_close() {
     });
 }
 
-/// Send message to main thread
+/// Send message to main thread.
+///
+/// For chunk data (ChunkInserted/ChunkUpdated), packs into a binary buffer
+/// and transfers the ArrayBuffer zero-copy. Format:
+///   [tag: u8] [chunk_id: i64 LE] [version: u64 LE] [state: rest of bytes]
+/// Tag: 1 = ChunkInserted, 2 = ChunkUpdated
+///
+/// For small messages (Connected, FatalError), uses JSON.
 fn send_to_main_thread(msg: WorkerToMain) {
     let scope = js_sys::global()
         .dyn_into::<DedicatedWorkerGlobalScope>()
         .expect("not in worker");
 
-    let json = serde_json::to_string(&msg).expect("serialization failed");
-    let value = wasm_bindgen::JsValue::from_str(&json);
-    scope.post_message(&value).expect("postMessage failed");
+    match msg {
+        WorkerToMain::ChunkInserted { chunk_id, state, version } => {
+            send_chunk_binary(&scope, 1, chunk_id, version, &state);
+        }
+        WorkerToMain::ChunkUpdated { chunk_id, state, version } => {
+            send_chunk_binary(&scope, 2, chunk_id, version, &state);
+        }
+        other => {
+            let json = serde_json::to_string(&other).expect("serialization failed");
+            let value = wasm_bindgen::JsValue::from_str(&json);
+            scope.post_message(&value).expect("postMessage failed");
+        }
+    }
+}
+
+/// Pack chunk data into a binary buffer and transfer to main thread.
+fn send_chunk_binary(scope: &DedicatedWorkerGlobalScope, tag: u8, chunk_id: i64, version: u64, state: &[u8]) {
+    let t0 = js_sys::Date::now();
+
+    // Header: 1 byte tag + 8 bytes chunk_id + 8 bytes version = 17 bytes
+    let total_len = 17 + state.len();
+    let buffer = js_sys::ArrayBuffer::new(total_len as u32);
+    let view = js_sys::Uint8Array::new(&buffer);
+
+    // Pack header
+    let mut header = [0u8; 17];
+    header[0] = tag;
+    header[1..9].copy_from_slice(&chunk_id.to_le_bytes());
+    header[9..17].copy_from_slice(&version.to_le_bytes());
+    view.set(&js_sys::Uint8Array::from(&header[..]), 0);
+
+    // Pack state data
+    // SAFETY: state slice is valid for the duration of this call
+    let state_view = unsafe { js_sys::Uint8Array::view(state) };
+    view.set(&state_view, 17);
+
+    let t1 = js_sys::Date::now();
+
+    // Transfer the ArrayBuffer (zero-copy move to main thread)
+    let transfer = js_sys::Array::new();
+    transfer.push(&buffer);
+    scope.post_message_with_transfer(&buffer, &transfer).expect("postMessage failed");
+
+    let t2 = js_sys::Date::now();
+
+    let data_kb = state.len() / 1024;
+    if data_kb > 100 {
+        web_sys::console::log_1(&format!(
+            "[PERF worker->main] pack_buffer={:.0}ms transfer={:.0}ms | {}KB binary",
+            t1 - t0, t2 - t1, data_kb
+        ).into());
+    }
 }
 
 /// Encode BSATN arguments for reducer

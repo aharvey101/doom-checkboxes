@@ -25,6 +25,8 @@ thread_local! {
     static FRAME_CALLBACK: RefCell<Option<Closure<dyn FnMut(js_sys::Uint32Array, js_sys::Uint8Array, u32, u32, i32, i32)>>> = const { RefCell::new(None) };
     static DOOM_STATE: RefCell<Option<AppState>> = const { RefCell::new(None) };
     static FRAME_COUNTER: RefCell<u32> = const { RefCell::new(0) };
+    static FPS_FRAME_COUNT: RefCell<u32> = const { RefCell::new(0) };
+    static FPS_LAST_LOG: RefCell<f64> = const { RefCell::new(0.0) };
 }
 
 /// JavaScript bindings for DoomMode
@@ -253,67 +255,108 @@ fn handle_doom_frame_delta(
     offset_x: i32,
     offset_y: i32,
 ) {
+    // FPS tracking
+    let now = js_sys::Date::now();
+    FPS_FRAME_COUNT.with(|c| *c.borrow_mut() += 1);
+    FPS_LAST_LOG.with(|last| {
+        let prev = *last.borrow();
+        if prev == 0.0 {
+            *last.borrow_mut() = now;
+        } else if now - prev >= 1000.0 {
+            let frames = FPS_FRAME_COUNT.with(|c| {
+                let f = *c.borrow();
+                *c.borrow_mut() = 0;
+                f
+            });
+            let elapsed = (now - prev) / 1000.0;
+            let pixels = indices.length();
+            web_sys::console::log_1(&format!(
+                "[PERF doom] {:.1} FPS ({} frames in {:.1}s) | {} changed pixels/frame",
+                frames as f64 / elapsed, frames, elapsed, pixels
+            ).into());
+            *last.borrow_mut() = now;
+        }
+    });
+
     // Get state
     let state = DOOM_STATE.with(|s| s.borrow().clone());
     let Some(state) = state else {
         return;
     };
 
-    // Convert delta to updates
+    let t0 = js_sys::Date::now();
+    let pixel_count = indices.length() as usize;
+
+    // Copy JS arrays to Rust once
     let indices_vec: Vec<u32> = indices.to_vec();
     let color_vec: Vec<u8> = color_data.to_vec();
 
-    let mut updates = Vec::with_capacity(indices_vec.len());
-
-    for (i, &pixel_idx) in indices_vec.iter().enumerate() {
-        let color_idx = i * 4;
-        let r = color_vec.get(color_idx).copied().unwrap_or(0);
-        let g = color_vec.get(color_idx + 1).copied().unwrap_or(0);
-        let b = color_vec.get(color_idx + 2).copied().unwrap_or(0);
-        let is_checked = color_vec.get(color_idx + 3).copied().unwrap_or(0) != 0;
-
-        let x = (pixel_idx % width) as i32;
-        let y = (pixel_idx / width) as i32;
-        let grid_x = offset_x + x;
-        let grid_y = offset_y + y;
-        let chunk_x = grid_x.div_euclid(CHUNK_SIZE as i32);
-        let chunk_y = grid_y.div_euclid(CHUNK_SIZE as i32);
-        let chunk_id = chunk_coords_to_id(chunk_x, chunk_y);
-        let local_x = grid_x.rem_euclid(CHUNK_SIZE as i32) as u32;
-        let local_y = grid_y.rem_euclid(CHUNK_SIZE as i32) as u32;
-        let cell_offset = local_y * CHUNK_SIZE + local_x;
-
-        updates.push((chunk_id, cell_offset, r, g, b, is_checked));
-    }
-
-    if updates.is_empty() {
+    if indices_vec.is_empty() {
         return;
     }
 
-    // Optimistic render: apply directly to loaded_chunks so the canvas updates immediately
-    // without waiting for the SpacetimeDB round-trip
+    let t1 = js_sys::Date::now();
+
+    // All Doom pixels land in a single chunk — precompute once.
+    let base_local_x = offset_x.rem_euclid(CHUNK_SIZE as i32) as u32;
+    let base_local_y = offset_y.rem_euclid(CHUNK_SIZE as i32) as u32;
+    let chunk_x = offset_x.div_euclid(CHUNK_SIZE as i32);
+    let chunk_y = offset_y.div_euclid(CHUNK_SIZE as i32);
+    let chunk_id = chunk_coords_to_id(chunk_x, chunk_y);
+
+    // Optimistic render only — write directly into chunk byte array
     state.loaded_chunks.update(|chunks| {
         use crate::constants::CHUNK_DATA_SIZE;
-        for &(chunk_id, cell_offset, r, g, b, checked) in &updates {
-            let data = chunks.entry(chunk_id).or_insert_with(|| vec![0u8; CHUNK_DATA_SIZE]);
-            crate::db::set_checkbox(data, cell_offset as usize, r, g, b, checked);
+        let data = chunks.entry(chunk_id).or_insert_with(|| vec![0u8; CHUNK_DATA_SIZE]);
+
+        for (i, &pixel_idx) in indices_vec.iter().enumerate() {
+            let x = pixel_idx % width;
+            let y = pixel_idx / width;
+            let byte_idx = (((base_local_y + y) * CHUNK_SIZE + (base_local_x + x)) * 4) as usize;
+            let color_idx = i * 4;
+
+            if byte_idx + 3 < data.len() {
+                data[byte_idx] = color_vec[color_idx];
+                data[byte_idx + 1] = color_vec[color_idx + 1];
+                data[byte_idx + 2] = color_vec[color_idx + 2];
+                data[byte_idx + 3] = if color_vec[color_idx + 3] != 0 { 0xFF } else { 0x00 };
+            }
         }
     });
     state.render_version.update(|v| *v += 1);
 
-    // Batch SpacetimeDB sends: only flush every BATCH_FRAMES frames to reduce server load
-    let should_flush = FRAME_COUNTER.with(|c| {
-        let count = c.borrow().wrapping_add(1);
-        *c.borrow_mut() = count;
-        count % BATCH_FRAMES == 0
-    });
+    let t2 = js_sys::Date::now();
 
-    state.pending_updates.update(|pending| {
-        pending.extend(updates);
-    });
+    // Send raw doom frame data to worker — it handles packing + SpacetimeDB flush.
+    // Set DOOM_SYNC_ENABLED to false to test FPS without syncing.
+    const DOOM_SYNC_ENABLED: bool = true;
 
-    if should_flush {
-        crate::db::flush_pending_updates(state);
+    if DOOM_SYNC_ENABLED {
+        // Binary format: [tag: u8 = 4] [width: u32] [base_local_x: u32] [base_local_y: u32]
+        //                [chunk_id: i64] [indices: N×u32] [colors: N×4 u8]
+        let header_len = 1 + 4 + 4 + 4 + 8;
+        let total = header_len + pixel_count * 4 + pixel_count * 4;
+
+        let mut buf = Vec::with_capacity(total);
+        buf.push(4u8);
+        buf.extend_from_slice(&width.to_le_bytes());
+        buf.extend_from_slice(&base_local_x.to_le_bytes());
+        buf.extend_from_slice(&base_local_y.to_le_bytes());
+        buf.extend_from_slice(&chunk_id.to_le_bytes());
+        for &idx in &indices_vec {
+            buf.extend_from_slice(&idx.to_le_bytes());
+        }
+        buf.extend_from_slice(&color_vec);
+
+        crate::worker_bridge::send_binary_to_worker(&buf);
+    }
+
+    let t3 = js_sys::Date::now();
+    if pixel_count > 1000 {
+        web_sys::console::log_1(&format!(
+            "[PERF doom-frame] copy={:.0}ms render={:.0}ms transfer={:.0}ms | {} pixels",
+            t1 - t0, t2 - t1, t3 - t2, pixel_count
+        ).into());
     }
 }
 

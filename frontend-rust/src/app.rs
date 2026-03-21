@@ -97,7 +97,8 @@ pub fn App() -> impl IntoView {
                             send_to_worker(MainToWorker::Subscribe { chunk_ids: vec![] });
                         }
                         WorkerToMain::ChunkInserted { chunk_id, state: chunk_state, version } => {
-                            web_sys::console::log_1(&format!("Chunk {} inserted, version {}", chunk_id, version).into());
+                            let t0 = js_sys::Date::now();
+                            let data_kb = chunk_state.len() / 1024;
                             // Only ignore doom chunk updates when WE are running Doom locally,
                             // to prevent server round-trips from overwriting optimistic frames.
                             // Other users' Doom frames should still be visible.
@@ -113,6 +114,13 @@ pub fn App() -> impl IntoView {
                             state.loading_chunks.update(|loading| {
                                 loading.remove(&chunk_id);
                             });
+                            let t1 = js_sys::Date::now();
+                            if data_kb > 100 {
+                                web_sys::console::log_1(&format!(
+                                    "[PERF main] chunk {} inserted state_update={:.0}ms | {}KB",
+                                    chunk_id, t1 - t0, data_kb
+                                ).into());
+                            }
                         }
                         WorkerToMain::ChunkUpdated { chunk_id, state: chunk_state, version } => {
                             web_sys::console::log_1(&format!("Chunk {} updated, version {}", chunk_id, version).into());
@@ -224,6 +232,41 @@ thread_local! {
 pub fn set_test_state(state: AppState) {
     TEST_STATE.with(|s| {
         *s.borrow_mut() = Some(state);
+    });
+}
+
+/// Apply delta updates from the worker directly to loaded_chunks.
+/// Called from worker_bridge when a DeltaBatch binary message arrives.
+/// bytes: packed [N × 16 bytes: chunk_id(8) + cell_offset(4) + r + g + b + checked]
+pub fn apply_deltas(bytes: &[u8], count: usize) {
+    TEST_STATE.with(|s| {
+        let state = s.borrow();
+        let Some(state) = state.as_ref() else { return };
+
+        state.loaded_chunks.update(|chunks| {
+            use crate::constants::CHUNK_DATA_SIZE;
+            for i in 0..count {
+                let offset = i * 16;
+                if offset + 16 > bytes.len() { break; }
+
+                let chunk_id = i64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
+                let cell_offset = u32::from_le_bytes(bytes[offset + 8..offset + 12].try_into().unwrap());
+                let r = bytes[offset + 12];
+                let g = bytes[offset + 13];
+                let b = bytes[offset + 14];
+                let checked = bytes[offset + 15] != 0;
+
+                let data = chunks.entry(chunk_id).or_insert_with(|| vec![0u8; CHUNK_DATA_SIZE]);
+                let byte_idx = (cell_offset as usize) * 4;
+                if byte_idx + 3 < data.len() {
+                    data[byte_idx] = r;
+                    data[byte_idx + 1] = g;
+                    data[byte_idx + 2] = b;
+                    data[byte_idx + 3] = if checked { 0xFF } else { 0x00 };
+                }
+            }
+        });
+        state.render_version.update(|v| *v += 1);
     });
 }
 
