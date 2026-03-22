@@ -13,8 +13,8 @@ pub const MIN_SCALE: f64 = 0.1;
 pub const MAX_SCALE: f64 = 10.0;
 
 // Colors
-pub const COLOR_UNCHECKED: &str = "#2c3e50";
-pub const COLOR_GRID: &str = "#1a1a2e";
+pub const COLOR_UNCHECKED: &str = "#000000";
+pub const COLOR_GRID: &str = "#000000";
 
 // SpacetimeDB
 pub const DATABASE_NAME: &str = "checkboxes";

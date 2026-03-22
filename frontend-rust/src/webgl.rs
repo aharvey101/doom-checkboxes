@@ -57,17 +57,6 @@ const FRAGMENT_SHADER: &str = r#"
         
         // Get cell coordinates within chunk
         vec2 cell = floor(gridPixel);
-        vec2 cellFrac = fract(gridPixel);
-        
-        // Calculate gap (1 pixel worth in cell space)
-        // Cap at 0.15 so grid lines don't consume entire cell at low zoom
-        float gapSize = min(1.0 / (u_cellSize * u_scale), 0.15);
-        
-        // Draw grid lines (gap between cells)
-        if (cellFrac.x < gapSize || cellFrac.y < gapSize) {
-            gl_FragColor = vec4(u_colorGrid, 1.0);
-            return;
-        }
         
         // Sample checkbox state texture directly
         // Texture is 1000x1000 RGBA, each pixel stores [R, G, B, checked]
