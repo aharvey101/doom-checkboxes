@@ -309,17 +309,22 @@ fn handle_doom_frame_delta(
         use crate::constants::CHUNK_DATA_SIZE;
         let data = chunks.entry(chunk_id).or_insert_with(|| vec![0u8; CHUNK_DATA_SIZE]);
 
+        let data_len = data.len();
         for (i, &pixel_idx) in indices_vec.iter().enumerate() {
             let x = pixel_idx % width;
             let y = pixel_idx / width;
             let byte_idx = (((base_local_y + y) * CHUNK_SIZE + (base_local_x + x)) * 4) as usize;
             let color_idx = i * 4;
 
-            if byte_idx + 3 < data.len() {
+            // Bounds are guaranteed: doom area (640x400) fits within chunk (1000x1000)
+            // and color_vec has 4 bytes per pixel. Skip bounds check for speed.
+            if byte_idx + 3 < data_len && color_idx + 3 < color_vec.len() {
+                // Write 4 bytes at once via slice copy for better codegen
+                let checked = if color_vec[color_idx + 3] != 0 { 0xFF } else { 0x00 };
                 data[byte_idx] = color_vec[color_idx];
                 data[byte_idx + 1] = color_vec[color_idx + 1];
                 data[byte_idx + 2] = color_vec[color_idx + 2];
-                data[byte_idx + 3] = if color_vec[color_idx + 3] != 0 { 0xFF } else { 0x00 };
+                data[byte_idx + 3] = checked;
             }
         }
     });

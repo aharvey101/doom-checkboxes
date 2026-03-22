@@ -12,7 +12,7 @@ use spacetimedb_client_api_messages::websocket::{
     v2::{
         CallReducer, CallReducerFlags, ClientMessage, InitialConnection, QueryRows,
         ReducerResult, ServerMessage, Subscribe, SubscribeApplied, SubscriptionError,
-        TableUpdate, TableUpdateRows, TransactionUpdate,
+        TableUpdate, TableUpdateRows, TransactionUpdate, Unsubscribe, UnsubscribeFlags,
     },
 };
 use spacetimedb_lib::bsatn;
@@ -43,6 +43,7 @@ pub struct WorkerClient {
     intentional_disconnect: bool,
     subscribed_chunks: Vec<i64>,
     request_id: u32,
+    chunk_subscription_id: Option<QuerySetId>,
     // Store closures to prevent memory leaks
     onopen_cb: Option<Closure<dyn FnMut(web_sys::Event)>>,
     onmessage_cb: Option<Closure<dyn FnMut(web_sys::MessageEvent)>>,
@@ -64,6 +65,7 @@ impl WorkerClient {
             intentional_disconnect: false,
             subscribed_chunks: Vec::new(),
             request_id: 0,
+            chunk_subscription_id: None,
             onopen_cb: None,
             onmessage_cb: None,
             onerror_cb: None,
@@ -141,25 +143,43 @@ impl WorkerClient {
         self.ws = Some(ws);
     }
 
-    /// Subscribe to checkbox_chunk (initial load) and checkbox_delta (live updates)
+    /// Subscribe to checkbox_chunk (initial load) and checkbox_delta (live updates).
+    /// After the initial chunk data arrives, we unsubscribe from checkbox_chunk
+    /// to avoid receiving 4MB blobs on every snapshot.
     pub fn subscribe(&mut self) {
         // Subscribe to full chunk state for initial load
         let request_id = self.next_request_id();
+        let chunk_query_set_id = QuerySetId::new(request_id);
+        self.chunk_subscription_id = Some(chunk_query_set_id);
         let subscribe_chunks = Subscribe {
             request_id,
-            query_set_id: QuerySetId::new(request_id),
+            query_set_id: chunk_query_set_id,
             query_strings: vec!["SELECT * FROM checkbox_chunk".into()].into_boxed_slice(),
         };
         self.send_message(&ClientMessage::Subscribe(subscribe_chunks));
 
-        // Subscribe to delta table for real-time updates
+        // Subscribe to packed frame table for real-time updates
         let request_id2 = self.next_request_id();
-        let subscribe_deltas = Subscribe {
+        let subscribe_frames = Subscribe {
             request_id: request_id2,
             query_set_id: QuerySetId::new(request_id2),
-            query_strings: vec!["SELECT * FROM checkbox_delta".into()].into_boxed_slice(),
+            query_strings: vec!["SELECT * FROM checkbox_frame".into()].into_boxed_slice(),
         };
-        self.send_message(&ClientMessage::Subscribe(subscribe_deltas));
+        self.send_message(&ClientMessage::Subscribe(subscribe_frames));
+    }
+
+    /// Unsubscribe from checkbox_chunk after initial data is loaded
+    pub fn unsubscribe_chunks(&mut self) {
+        if let Some(query_set_id) = self.chunk_subscription_id.take() {
+            let request_id = self.next_request_id();
+            let unsub = Unsubscribe {
+                request_id,
+                query_set_id,
+                flags: UnsubscribeFlags::default(),
+            };
+            self.send_message(&ClientMessage::Unsubscribe(unsub));
+            web_sys::console::log_1(&"[worker] Unsubscribed from checkbox_chunk (initial load complete)".into());
+        }
     }
 
     /// Send BSATN-encoded reducer call
@@ -430,6 +450,14 @@ fn handle_subscribe_applied(sub: SubscribeApplied) {
 
     // Process initial rows
     process_query_rows(&sub.rows);
+
+    // If this was the chunk subscription, unsubscribe now that initial data is loaded.
+    // We only need deltas for live updates going forward.
+    with_client(|client| {
+        if client.chunk_subscription_id == Some(sub.query_set_id) {
+            client.unsubscribe_chunks();
+        }
+    });
 }
 
 /// Handle transaction update message
@@ -483,6 +511,8 @@ fn process_table_update(table: &TableUpdate) {
         process_chunk_table_update(table);
     } else if table_name == "checkbox_delta" {
         process_delta_table_update(table);
+    } else if table_name == "checkbox_frame" {
+        process_frame_table_update(table);
     }
 }
 
@@ -562,6 +592,72 @@ fn process_delta_table_update(table: &TableUpdate) {
             count, deltas.len() / 1024
         ).into());
     }
+}
+
+/// Process checkbox_frame table updates — forward packed binary directly to main thread.
+/// The frame's `data` field is already packed as [N × 16 bytes] in the format
+/// the main thread expects, so no per-pixel parsing is needed.
+fn process_frame_table_update(table: &TableUpdate) {
+    let scope = js_sys::global()
+        .dyn_into::<DedicatedWorkerGlobalScope>()
+        .expect("not in worker");
+
+    for rows in table.rows.iter() {
+        match rows {
+            TableUpdateRows::PersistentTable(persistent) => {
+                for row_bytes in &persistent.inserts {
+                    if let Some(frame_data) = parse_checkbox_frame(&row_bytes) {
+                        if frame_data.is_empty() {
+                            continue;
+                        }
+                        let count = (frame_data.len() / 16) as u32;
+
+                        // Send as binary: [tag=3] [count: u32] [data...]
+                        let total_len = 1 + 4 + frame_data.len();
+                        let buffer = js_sys::ArrayBuffer::new(total_len as u32);
+                        let view = js_sys::Uint8Array::new(&buffer);
+
+                        let mut header = [0u8; 5];
+                        header[0] = 3; // DeltaBatch tag
+                        header[1..5].copy_from_slice(&count.to_le_bytes());
+                        view.set(&js_sys::Uint8Array::from(&header[..]), 0);
+
+                        let data_view = unsafe { js_sys::Uint8Array::view(&frame_data) };
+                        view.set(&data_view, 5);
+
+                        let transfer = js_sys::Array::new();
+                        transfer.push(&buffer);
+                        scope.post_message_with_transfer(&buffer, &transfer).expect("postMessage failed");
+
+                        if count > 100 {
+                            web_sys::console::log_1(&format!(
+                                "[PERF worker->main] frame {} updates ({}KB packed)",
+                                count, frame_data.len() / 1024
+                            ).into());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Parse a CheckboxFrame from BSATN — extract just the data field.
+/// BSATN layout: seq(u64) + data(length-prefixed Vec<u8>)
+fn parse_checkbox_frame(bytes: &[u8]) -> Option<Vec<u8>> {
+    if bytes.len() < 12 { // 8 (seq) + 4 (data len)
+        return None;
+    }
+    // Skip seq (8 bytes)
+    let reader = &bytes[8..];
+    // Read data Vec<u8>: length-prefixed with u32
+    let data_len = u32::from_le_bytes(reader[..4].try_into().ok()?) as usize;
+    let reader = &reader[4..];
+    if reader.len() < data_len {
+        return None;
+    }
+    Some(reader[..data_len].to_vec())
 }
 
 /// Parse a single CheckboxChunk from BSATN

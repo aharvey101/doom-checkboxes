@@ -51,13 +51,25 @@ pub struct CheckboxChunk {
 pub struct CheckboxDelta {
     #[auto_inc]
     #[primary_key]
-    pub seq: u64,        // auto-incrementing sequence number
+    pub seq: u64,
     pub chunk_id: i64,
     pub cell_offset: u32,
     pub r: u8,
     pub g: u8,
     pub b: u8,
     pub checked: bool,
+}
+
+/// Packed frame for real-time sync. One row = one batch of updates.
+/// Contains pre-packed binary data: [N × 16 bytes per update]
+/// Each update: [chunk_id: i64 LE] [cell_offset: u32 LE] [r] [g] [b] [checked]
+/// SpacetimeDB sends one row insert instead of 50K individual delta rows.
+#[table(accessor = checkbox_frame, public)]
+pub struct CheckboxFrame {
+    #[auto_inc]
+    #[primary_key]
+    pub seq: u64,
+    pub data: Vec<u8>,  // packed updates, 16 bytes each
 }
 
 /// Set a checkbox with color at the given position
@@ -71,8 +83,7 @@ fn set_checkbox(data: &mut [u8], cell_index: usize, r: u8, g: u8, b: u8, checked
     }
 }
 
-/// Update a single checkbox — write delta only for real-time sync.
-/// Full chunk state is updated by snapshot_chunks.
+/// Update a single checkbox — write frame + delta for real-time sync.
 #[reducer]
 pub fn update_checkbox(
     ctx: &ReducerContext,
@@ -83,8 +94,22 @@ pub fn update_checkbox(
     b: u8,
     checked: bool,
 ) {
+    // Pack single update as a frame
+    let mut packed = Vec::with_capacity(16);
+    packed.extend_from_slice(&chunk_id.to_le_bytes());
+    packed.extend_from_slice(&cell_offset.to_le_bytes());
+    packed.push(r);
+    packed.push(g);
+    packed.push(b);
+    packed.push(if checked { 1 } else { 0 });
+
+    ctx.db.checkbox_frame().insert(CheckboxFrame {
+        seq: 0,
+        data: packed,
+    });
+
     ctx.db.checkbox_delta().insert(CheckboxDelta {
-        seq: 0, // auto_inc
+        seq: 0,
         chunk_id,
         cell_offset,
         r,
@@ -94,13 +119,31 @@ pub fn update_checkbox(
     });
 }
 
-/// Batch update: write deltas only (real-time sync).
-/// The full chunk state is updated by snapshot_chunks, called less frequently.
+/// Batch update: pack into a single frame row for real-time sync.
+/// Also writes individual deltas for snapshot_chunks to process.
 #[reducer]
 pub fn batch_update_checkboxes(ctx: &ReducerContext, updates: Vec<CheckboxUpdate>) {
+    // Pack all updates into a single binary blob (16 bytes each)
+    let mut packed = Vec::with_capacity(updates.len() * 16);
+    for update in &updates {
+        packed.extend_from_slice(&update.chunk_id.to_le_bytes());
+        packed.extend_from_slice(&update.cell_offset.to_le_bytes());
+        packed.push(update.r);
+        packed.push(update.g);
+        packed.push(update.b);
+        packed.push(if update.checked { 1 } else { 0 });
+    }
+
+    // One row insert instead of 50K
+    ctx.db.checkbox_frame().insert(CheckboxFrame {
+        seq: 0, // auto_inc
+        data: packed,
+    });
+
+    // Also write individual deltas for snapshot to process
     for update in updates {
         ctx.db.checkbox_delta().insert(CheckboxDelta {
-            seq: 0, // auto_inc
+            seq: 0,
             chunk_id: update.chunk_id,
             cell_offset: update.cell_offset,
             r: update.r,
@@ -112,13 +155,12 @@ pub fn batch_update_checkboxes(ctx: &ReducerContext, updates: Vec<CheckboxUpdate
 }
 
 /// Snapshot: apply all pending deltas to the full chunk state.
-/// Called periodically by a client (e.g., every 5 seconds) to keep
-/// checkbox_chunk up to date for new subscribers joining.
+/// Only touches checkbox_chunk table — spectators unsubscribe from this,
+/// so they won't receive the large TransactionUpdate.
 #[reducer]
 pub fn snapshot_chunks(ctx: &ReducerContext) {
     use std::collections::HashMap;
 
-    // Collect all deltas
     let deltas: Vec<_> = ctx.db.checkbox_delta().iter().collect();
     if deltas.is_empty() {
         return;
@@ -152,11 +194,31 @@ pub fn snapshot_chunks(ctx: &ReducerContext) {
             ctx.db.checkbox_chunk().insert(new_chunk);
         }
     }
+}
 
-    // Clear processed deltas
-    let seqs: Vec<u64> = deltas.iter().map(|d| d.seq).collect();
-    for seq in seqs {
+/// Clean up old deltas and frames. Called separately from snapshot.
+#[reducer]
+pub fn cleanup_old_deltas(ctx: &ReducerContext, max_seq_to_delete: u64) {
+    let old_delta_seqs: Vec<u64> = ctx
+        .db
+        .checkbox_delta()
+        .iter()
+        .filter(|d| d.seq <= max_seq_to_delete)
+        .map(|d| d.seq)
+        .collect();
+    for seq in old_delta_seqs {
         ctx.db.checkbox_delta().seq().delete(seq);
+    }
+
+    let old_frame_seqs: Vec<u64> = ctx
+        .db
+        .checkbox_frame()
+        .iter()
+        .filter(|f| f.seq <= max_seq_to_delete)
+        .map(|f| f.seq)
+        .collect();
+    for seq in old_frame_seqs {
+        ctx.db.checkbox_frame().seq().delete(seq);
     }
 }
 

@@ -235,9 +235,16 @@ pub fn set_test_state(state: AppState) {
     });
 }
 
+thread_local! {
+    static DELTA_RENDER_SCHEDULED: std::cell::RefCell<bool> = const { std::cell::RefCell::new(false) };
+}
+
 /// Apply delta updates from the worker directly to loaded_chunks.
 /// Called from worker_bridge when a DeltaBatch binary message arrives.
 /// bytes: packed [N × 16 bytes: chunk_id(8) + cell_offset(4) + r + g + b + checked]
+///
+/// Coalesces renders: only bumps render_version once per animation frame,
+/// even if multiple delta batches arrive in the same frame.
 pub fn apply_deltas(bytes: &[u8], count: usize) {
     TEST_STATE.with(|s| {
         let state = s.borrow();
@@ -245,28 +252,57 @@ pub fn apply_deltas(bytes: &[u8], count: usize) {
 
         state.loaded_chunks.update(|chunks| {
             use crate::constants::CHUNK_DATA_SIZE;
+
+            // Cache last chunk pointer to avoid HashMap lookup per delta.
+            // Nearly all doom deltas hit the same chunk_id.
+            let mut last_chunk_id: i64 = i64::MIN;
+            let mut last_data: *mut Vec<u8> = std::ptr::null_mut();
+
             for i in 0..count {
                 let offset = i * 16;
                 if offset + 16 > bytes.len() { break; }
 
                 let chunk_id = i64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
                 let cell_offset = u32::from_le_bytes(bytes[offset + 8..offset + 12].try_into().unwrap());
-                let r = bytes[offset + 12];
-                let g = bytes[offset + 13];
-                let b = bytes[offset + 14];
-                let checked = bytes[offset + 15] != 0;
 
-                let data = chunks.entry(chunk_id).or_insert_with(|| vec![0u8; CHUNK_DATA_SIZE]);
+                // Only do HashMap lookup when chunk_id changes
+                if chunk_id != last_chunk_id {
+                    last_chunk_id = chunk_id;
+                    let data = chunks.entry(chunk_id).or_insert_with(|| vec![0u8; CHUNK_DATA_SIZE]);
+                    last_data = data as *mut Vec<u8>;
+                }
+
+                let data = unsafe { &mut *last_data };
                 let byte_idx = (cell_offset as usize) * 4;
                 if byte_idx + 3 < data.len() {
-                    data[byte_idx] = r;
-                    data[byte_idx + 1] = g;
-                    data[byte_idx + 2] = b;
-                    data[byte_idx + 3] = if checked { 0xFF } else { 0x00 };
+                    data[byte_idx] = bytes[offset + 12];
+                    data[byte_idx + 1] = bytes[offset + 13];
+                    data[byte_idx + 2] = bytes[offset + 14];
+                    data[byte_idx + 3] = if bytes[offset + 15] != 0 { 0xFF } else { 0x00 };
                 }
             }
         });
-        state.render_version.update(|v| *v += 1);
+
+        // Coalesce: schedule one render_version bump per animation frame
+        let already_scheduled = DELTA_RENDER_SCHEDULED.with(|f| {
+            let was = *f.borrow();
+            *f.borrow_mut() = true;
+            was
+        });
+
+        if !already_scheduled {
+            let state_copy = *state;
+            let closure = wasm_bindgen::closure::Closure::once(Box::new(move || {
+                DELTA_RENDER_SCHEDULED.with(|f| *f.borrow_mut() = false);
+                state_copy.render_version.update(|v| *v += 1);
+            }) as Box<dyn FnOnce()>);
+
+            web_sys::window()
+                .expect("no window")
+                .request_animation_frame(closure.as_ref().unchecked_ref())
+                .expect("rAF failed");
+            closure.forget();
+        }
     });
 }
 

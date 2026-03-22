@@ -28,6 +28,7 @@ fn flush_worker_batch() {
     }
 
     let total = updates.len();
+    HAS_FLUSHED.with(|f| *f.borrow_mut() = true);
 
     // Send in capped batches to avoid blocking the worker on huge messages
     for chunk in updates.chunks(MAX_BATCH_SIZE) {
@@ -70,23 +71,42 @@ fn schedule_flush() {
     closure.forget();
 }
 
+thread_local! {
+    static HAS_FLUSHED: std::cell::RefCell<bool> = const { std::cell::RefCell::new(false) };
+}
+
 /// Periodically call snapshot_chunks to persist deltas to full chunk state.
-/// This keeps checkbox_chunk up-to-date for new subscribers and clears old deltas.
+/// Only runs if this client has actually sent updates (i.e., is a player, not a spectator).
 fn schedule_snapshot() {
     let scope: DedicatedWorkerGlobalScope = js_sys::global().unchecked_into();
     let closure = Closure::once(Box::new(|| {
-        // Call snapshot_chunks reducer (no args — empty BSATN)
-        with_client(|client| {
-            client.call_reducer("snapshot_chunks", &[]);
+        let should_snapshot = HAS_FLUSHED.with(|f| {
+            let flushed = *f.borrow();
+            *f.borrow_mut() = false;
+            flushed
         });
-        web_sys::console::log_1(&"[worker] called snapshot_chunks".into());
-        // Schedule next snapshot
+
+        if should_snapshot {
+            with_client(|client| {
+                client.call_reducer("snapshot_chunks", &[]);
+            });
+            // Clean up deltas in a separate reducer call so the
+            // TransactionUpdate for snapshot only touches checkbox_chunk
+            // (which spectators unsubscribe from).
+            // Use u64::MAX to delete all current deltas.
+            let cleanup_args = u64::MAX.to_le_bytes();
+            with_client(|client| {
+                client.call_reducer("cleanup_old_deltas", &cleanup_args);
+            });
+            web_sys::console::log_1(&"[worker] called snapshot_chunks + cleanup".into());
+        }
+
         schedule_snapshot();
     }) as Box<dyn FnOnce()>);
 
     let _ = scope.set_timeout_with_callback_and_timeout_and_arguments_0(
         closure.as_ref().unchecked_ref(),
-        5000, // every 5 seconds
+        5000,
     );
     closure.forget();
 }

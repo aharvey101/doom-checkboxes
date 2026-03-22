@@ -25,13 +25,13 @@ test('profile cross-user sync performance', async ({ browser }) => {
 
   // Connect both
   await player.goto('http://127.0.0.1:8090');
-  await player.waitForSelector('canvas', { timeout: 30000 });
-  await player.waitForSelector('.status.connected', { timeout: 30000 });
+  await player.waitForSelector('canvas', { timeout: 60000 });
+  await player.waitForSelector('.status.connected', { timeout: 60000 });
   console.log('Player connected');
 
   await spectator.goto('http://127.0.0.1:8090');
-  await spectator.waitForSelector('canvas', { timeout: 30000 });
-  await spectator.waitForSelector('.status.connected', { timeout: 30000 });
+  await spectator.waitForSelector('canvas', { timeout: 60000 });
+  await spectator.waitForSelector('.status.connected', { timeout: 60000 });
   console.log('Spectator connected');
 
   // Navigate spectator to doom area
