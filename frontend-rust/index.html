@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Infinite Checkboxes</title>
+    <!-- Preload Doom WASM so it's cached when user clicks Play -->
+    <link rel="preload" href="doom.wasm" as="fetch" crossorigin>
     <!-- Doom WASM (jacobenget/doom.wasm) -->
     <link data-trunk rel="rust" data-bin="checkbox-frontend" data-wasm-opt="z" />
     <link data-trunk rel="copy-file" href="doom.wasm" />

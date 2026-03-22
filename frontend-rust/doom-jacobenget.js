@@ -7,6 +7,7 @@ class DoomJacobenget {
         this.moduleInstanceMemory = null;
         this.exports = null;
         this.wasmURL = options.wasmURL || '/doom.wasm';
+        this.precompiledModule = options.precompiledModule || null;
         this.doomWidth = 0;
         this.doomHeight = 0;
         this.keyMap = new Map();
@@ -70,7 +71,13 @@ class DoomJacobenget {
         };
 
         // Load and instantiate the WASM module
-        const { instance } = await WebAssembly.instantiateStreaming(fetch(this.wasmURL), imports);
+        // Use precompiled module if available (from DoomMode background preload)
+        let instance;
+        if (this.precompiledModule) {
+            instance = (await WebAssembly.instantiate(this.precompiledModule, imports));
+        } else {
+            instance = (await WebAssembly.instantiateStreaming(fetch(this.wasmURL), imports)).instance;
+        }
 
         this.exports = instance.exports;
         this.moduleInstanceMemory = this.exports.memory;

@@ -76,51 +76,31 @@ fn set_doom_container_visible(visible: bool) {
     }
 }
 
-/// Clear the Doom rendering area (chunk at offset 5, 5)
+/// Clear the Doom rendering area locally (no SpacetimeDB flush).
+/// Just zeros out the doom region in the local chunk data so the canvas
+/// shows a black grid immediately. The first Doom frame will overwrite it.
 fn clear_doom_chunks(state: &AppState) {
     use crate::constants::CHUNK_DATA_SIZE;
 
-    web_sys::console::log_1(&"Clearing Doom chunk...".into());
-
-    // Calculate the chunk ID for the Doom area
     let chunk_x = CHUNK_OFFSET_X.div_euclid(CHUNK_SIZE as i32);
     let chunk_y = CHUNK_OFFSET_Y.div_euclid(CHUNK_SIZE as i32);
     let chunk_id = chunk_coords_to_id(chunk_x, chunk_y);
+    let base_x = (CHUNK_OFFSET_X as u32) % CHUNK_SIZE;
+    let base_y = (CHUNK_OFFSET_Y as u32) % CHUNK_SIZE;
 
-    // Pre-populate loaded_chunks with an empty chunk so the canvas renders
-    // the doom area immediately (black grid) without waiting for SpacetimeDB
     state.loaded_chunks.update(|chunks| {
-        chunks
-            .entry(chunk_id)
-            .or_insert_with(|| vec![0u8; CHUNK_DATA_SIZE]);
+        let data = chunks.entry(chunk_id).or_insert_with(|| vec![0u8; CHUNK_DATA_SIZE]);
+
+        // Zero out just the Doom rectangle (640×400 × 4 bytes per pixel)
+        for y in 0..DOOM_HEIGHT {
+            let row_start = ((base_y + y) * CHUNK_SIZE + base_x) as usize * 4;
+            let row_end = row_start + (DOOM_WIDTH as usize) * 4;
+            if row_end <= data.len() {
+                data[row_start..row_end].fill(0);
+            }
+        }
     });
     state.render_version.update(|v| *v += 1);
-
-    // Create updates to clear all pixels in the Doom area
-    let mut updates = Vec::new();
-
-    for y in 0..DOOM_HEIGHT {
-        for x in 0..DOOM_WIDTH {
-            // Calculate local position within chunk
-            let local_x = (CHUNK_OFFSET_X as u32 + x) % CHUNK_SIZE;
-            let local_y = (CHUNK_OFFSET_Y as u32 + y) % CHUNK_SIZE;
-            let cell_offset = local_y * CHUNK_SIZE + local_x;
-
-            // Clear the checkbox (black, unchecked)
-            updates.push((chunk_id, cell_offset, 0u8, 0u8, 0u8, false));
-        }
-    }
-
-    web_sys::console::log_1(&format!("Clearing {} checkboxes in Doom area", updates.len()).into());
-
-    // Send all updates to server
-    state.pending_updates.update(|pending| {
-        pending.extend(updates);
-    });
-
-    crate::db::flush_pending_updates(state.clone());
-
-    web_sys::console::log_1(&"Doom chunk cleared and synced to database".into());
 }
 
 /// Initialize and start Doom mode

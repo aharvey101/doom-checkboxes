@@ -7,6 +7,19 @@ window.DoomMode = (function() {
     let isCurrentlyRunning = false;
     let doomContainer = null;
     let previousFrame = null;
+    let precompiledModule = null;
+
+    // Precompile doom.wasm in the background on page load
+    (async () => {
+        try {
+            const response = await fetch('/doom.wasm');
+            const bytes = await response.arrayBuffer();
+            precompiledModule = await WebAssembly.compile(bytes);
+            console.log('Doom WASM precompiled and ready');
+        } catch (e) {
+            console.warn('Doom WASM precompile failed (will compile on demand):', e.message);
+        }
+    })();
 
     // Doom rendering constants - matches doom.rs and jacobenget/doom.wasm
     const DOOM_WIDTH = 640;
@@ -145,9 +158,10 @@ window.DoomMode = (function() {
             console.log("Initializing Doom WASM...");
 
             try {
-                // Create Doom instance
+                // Create Doom instance (use precompiled module if available)
                 doomInstance = new window.DoomJacobenget({
                     wasmURL: '/doom.wasm',
+                    precompiledModule: precompiledModule,
                     onFrame: handleFrame
                 });
 
