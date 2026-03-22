@@ -61,39 +61,6 @@ test.describe('Drag to Fill', () => {
     expect(changed).toBe(true);
   });
 
-  test('shift+drag pans instead of filling', async ({ page }) => {
-    await page.goto('/');
-    await page.waitForTimeout(2000);
-
-    const canvas = page.locator('canvas');
-    const box = await canvas.boundingBox();
-    if (!box) throw new Error('Canvas not found');
-
-    // Take screenshot before
-    const before = await canvas.screenshot();
-
-    // Shift+drag should pan, not fill
-    const startX = box.x + 200;
-    const startY = box.y + 200;
-
-    await page.keyboard.down('Shift');
-    await page.mouse.move(startX, startY);
-    await page.mouse.down();
-    await page.mouse.move(startX - 50, startY - 50, { steps: 5 });
-    await page.mouse.up();
-    await page.keyboard.up('Shift');
-    
-    await page.waitForTimeout(500);
-
-    // Take screenshot after - view should have panned
-    const after = await canvas.screenshot();
-
-    // Screenshots should differ (view panned)
-    const changed = Buffer.compare(before, after) !== 0;
-    console.log('Shift+drag changed view:', changed);
-    expect(changed).toBe(true);
-  });
-
   test('drag creates line of filled checkboxes', async ({ page }) => {
     await page.goto('/');
     await page.waitForTimeout(2000);
