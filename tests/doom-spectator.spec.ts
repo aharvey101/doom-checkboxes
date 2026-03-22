@@ -5,12 +5,13 @@ test('spectator sees Doom frames', async ({ browser }) => {
   const spectator = await (await browser.newContext()).newPage();
 
   // Connect BOTH users first before starting Doom
-  await player.goto('http://127.0.0.1:8090');
+  const url = process.env.BASE_URL || 'http://127.0.0.1:8080';
+  await player.goto(url);
   await player.waitForSelector('canvas', { timeout: 15000 });
   await player.waitForSelector('.status.connected', { timeout: 30000 });
   console.log('STEP 1: Player connected');
 
-  await spectator.goto('http://127.0.0.1:8090');
+  await spectator.goto(url);
   await spectator.waitForSelector('canvas', { timeout: 30000 });
   await spectator.waitForSelector('.status.connected', { timeout: 30000 });
   console.log('STEP 2: Spectator connected');

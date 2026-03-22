@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test('Worker main thread blocking test', async ({ page }) => {
-    await page.goto('http://127.0.0.1:8090');
+    await page.goto(process.env.BASE_URL || 'http://127.0.0.1:8080');
     await page.waitForTimeout(2000);
 
     // Measure main thread blocking during batch update

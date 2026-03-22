@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test('Doom e2e: WebSocket connects, Doom starts, renders frames', async ({ page }) => {
-    await page.goto('http://127.0.0.1:8090');
+    await page.goto(process.env.BASE_URL || 'http://127.0.0.1:8080');
     await page.waitForSelector('canvas', { timeout: 15000 });
 
     // Assert 1: WebSocket connects
