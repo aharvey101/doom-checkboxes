@@ -154,7 +154,9 @@ thread_local! {
 }
 
 fn init_webgl(canvas: &web_sys::HtmlCanvasElement) -> Option<GlState> {
-    let gl: GL = canvas.get_context("webgl").ok()??.dyn_into().ok()?;
+    let opts = js_sys::Object::new();
+    js_sys::Reflect::set(&opts, &"preserveDrawingBuffer".into(), &true.into()).ok();
+    let gl: GL = canvas.get_context_with_context_options("webgl", &opts).ok()??.dyn_into().ok()?;
 
     // Compile shaders
     let vs = compile_shader(&gl, GL::VERTEX_SHADER, VERT_SHADER)?;

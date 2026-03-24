@@ -227,6 +227,10 @@ fn parse_message(bytes: &[u8]) {
             });
         }
         ServerMessage::TransactionUpdate(tx) => {
+            let table_names: Vec<String> = tx.query_sets.iter()
+                .flat_map(|qs| qs.tables.iter().map(|t| t.table_name.to_string()))
+                .collect();
+            web_sys::console::log_1(&format!("[worker] TransactionUpdate tables={:?}", table_names).into());
             for qs in tx.query_sets.iter() { for t in qs.tables.iter() { process_table_update(t); } }
         }
         ServerMessage::ReducerResult(r) => {
@@ -253,19 +257,25 @@ fn process_table_update(table: &TableUpdate) {
     let name: &str = &table.table_name;
 
     if name == "frame" {
-        // Only forward the latest frame — drop older ones to prevent lag
         let mut latest: Option<Vec<u8>> = None;
+        let mut parsed = 0u32;
+        let mut total_rows = 0u32;
         for rows in table.rows.iter() {
             if let TableUpdateRows::PersistentTable(p) = rows {
                 for row in &p.inserts {
+                    total_rows += 1;
                     if let Some(data) = parse_frame(&row) {
+                        parsed += 1;
                         latest = Some(data);
                     }
                 }
             }
         }
-        if let Some(data) = latest {
-            send_binary_to_main(2, &data);
+        if let Some(ref data) = latest {
+            web_sys::console::log_1(&format!("[worker] frame: {}/{} parsed, sending {}B to main", parsed, total_rows, data.len()).into());
+            send_binary_to_main(2, data);
+        } else if total_rows > 0 {
+            web_sys::console::log_1(&format!("[worker] frame: 0/{} parsed (parse failed)", total_rows).into());
         }
     } else if name == "snapshot" {
         for rows in table.rows.iter() {
