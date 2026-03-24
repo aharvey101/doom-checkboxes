@@ -75,39 +75,33 @@ fn handle_main_message(event: web_sys::MessageEvent) {
         view.slice(0, 1).copy_to(&mut tag);
 
         if tag[0] == 4 {
-            // DoomFrame: [tag=4][width:4][base_x:4][base_y:4][chunk_id:8] = 21 header
-            // then [indices: N×4][colors: N×4]
-            if len < 21 { return; }
-            let mut header = [0u8; 21];
-            view.slice(0, 21).copy_to(&mut header);
+            // DoomFrame: [tag=4][width:4] then [indices: N×4][colors: N×4]
+            if len < 5 { return; }
+            let mut header = [0u8; 5];
+            view.slice(0, 5).copy_to(&mut header);
 
             let width = u32::from_le_bytes(header[1..5].try_into().unwrap());
-            let base_x = u32::from_le_bytes(header[5..9].try_into().unwrap());
-            let base_y = u32::from_le_bytes(header[9..13].try_into().unwrap());
-
-            let remaining = len - 21;
+            let remaining = len - 5;
             let pixel_count = remaining / 8;
 
             let mut payload = vec![0u8; remaining];
-            view.slice(21, len as u32).copy_to(&mut payload);
+            view.slice(5, len as u32).copy_to(&mut payload);
 
-            let chunk_size = 1000u32;
             let mut updates = Vec::with_capacity(pixel_count);
             for i in 0..pixel_count {
                 let idx_off = i * 4;
                 let color_off = pixel_count * 4 + i * 4;
 
                 let pixel_idx = u32::from_le_bytes(payload[idx_off..idx_off + 4].try_into().unwrap());
-                let x = pixel_idx % width;
-                let y = pixel_idx / width;
-                let cell_offset = (base_y + y) * chunk_size + (base_x + x);
+                // Flat pixel offset: y * width + x
+                let offset = pixel_idx;
 
                 let r = payload[color_off];
                 let g = payload[color_off + 1];
                 let b = payload[color_off + 2];
                 let checked = payload[color_off + 3] != 0;
 
-                updates.push((cell_offset, r, g, b, checked));
+                updates.push((offset, r, g, b, checked));
             }
 
             PENDING_UPDATES.with(|p| p.borrow_mut().extend(updates));
