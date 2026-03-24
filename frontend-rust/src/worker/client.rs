@@ -233,10 +233,9 @@ fn parse_message(bytes: &[u8]) {
             web_sys::console::log_1(&format!("[worker] TransactionUpdate tables={:?}", table_names).into());
             for qs in tx.query_sets.iter() { for t in qs.tables.iter() { process_table_update(t); } }
         }
-        ServerMessage::ReducerResult(r) => {
-            if let ReducerOutcome::Ok(ok) = r.result {
-                for qs in ok.transaction_update.query_sets.iter() { for t in qs.tables.iter() { process_table_update(t); } }
-            }
+        ServerMessage::ReducerResult(_) => {
+            // Don't process our own reducer results — the player already
+            // applied frames optimistically. Processing the echo would cause flicker.
         }
         ServerMessage::SubscriptionError(e) => {
             web_sys::console::error_1(&format!("Sub error: {}", e.error).into());
@@ -257,37 +256,23 @@ fn process_table_update(table: &TableUpdate) {
     let name: &str = &table.table_name;
 
     if name == "frame" {
+        // Only forward the latest frame — drop older ones to prevent lag
         let mut latest: Option<Vec<u8>> = None;
-        let mut parsed = 0u32;
-        let mut total_rows = 0u32;
         for rows in table.rows.iter() {
             if let TableUpdateRows::PersistentTable(p) = rows {
                 for row in &p.inserts {
-                    total_rows += 1;
                     if let Some(data) = parse_frame(&row) {
-                        parsed += 1;
                         latest = Some(data);
                     }
                 }
             }
         }
-        if let Some(ref data) = latest {
-            web_sys::console::log_1(&format!("[worker] frame: {}/{} parsed, sending {}B to main", parsed, total_rows, data.len()).into());
-            send_binary_to_main(2, data);
-        } else if total_rows > 0 {
-            web_sys::console::log_1(&format!("[worker] frame: 0/{} parsed (parse failed)", total_rows).into());
-        }
-    } else if name == "snapshot" {
-        for rows in table.rows.iter() {
-            if let TableUpdateRows::PersistentTable(p) = rows {
-                for row in &p.inserts {
-                    if let Some(state) = parse_snapshot(&row) {
-                        send_binary_to_main(1, &state);
-                    }
-                }
-            }
+        if let Some(data) = latest {
+            send_binary_to_main(2, &data);
         }
     }
+    // Ignore snapshot updates — we only use snapshot for initial load via SubscribeApplied.
+    // Live snapshot updates would overwrite the pixel buffer with stale full-frame data.
 }
 
 fn parse_frame(bytes: &[u8]) -> Option<Vec<u8>> {
