@@ -98,6 +98,7 @@ impl WorkerClient {
     }
 
     pub fn subscribe(&mut self) {
+        web_sys::console::log_1(&"[worker] subscribe() called".into());
         let rid = self.next_request_id();
         let snap_qid = QuerySetId::new(rid);
         self.snapshot_subscription_id = Some(snap_qid);
@@ -205,7 +206,13 @@ fn parse_message(bytes: &[u8]) {
         _ => return,
     };
 
-    let msg: ServerMessage = match bsatn::from_slice(&decompressed) { Ok(m) => m, Err(_) => return };
+    let msg: ServerMessage = match bsatn::from_slice(&decompressed) {
+        Ok(m) => m,
+        Err(e) => {
+            web_sys::console::error_1(&format!("BSATN parse failed: {:?} ({}B)", e, decompressed.len()).into());
+            return;
+        }
+    };
 
     match msg {
         ServerMessage::InitialConnection(init) => {
@@ -213,6 +220,7 @@ fn parse_message(bytes: &[u8]) {
             send_to_main_thread(WorkerToMain::Connected);
         }
         ServerMessage::SubscribeApplied(sub) => {
+            web_sys::console::log_1(&format!("Subscribe applied: {:?}", sub.query_set_id).into());
             process_initial_rows(&sub.rows);
             with_client(|c| {
                 if c.snapshot_subscription_id == Some(sub.query_set_id) { c.unsubscribe_snapshot(); }
