@@ -263,7 +263,9 @@ pub fn apply_snapshot(data: &[u8]) {
 
 /// Apply frame delta: packed [N × 7 bytes: offset3 + rgba]
 /// Just memory writes to the pixel buffer — GPU upload happens on next render.
+/// Ignored while Doom is running locally (player uses optimistic render).
 pub fn apply_frame_delta(data: &[u8]) {
+    if crate::doom::is_doom_running() { return; }
     let count = data.len() / 7;
     if count == 0 { return; }
 
