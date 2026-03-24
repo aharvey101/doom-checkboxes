@@ -150,10 +150,10 @@ pub fn App() -> impl IntoView {
                 // Connect to SpacetimeDB via worker (with delay to ensure worker is ready)
                 let uri = get_spacetimedb_uri();
                 let callback = wasm_bindgen::closure::Closure::once(move || {
-                    web_sys::console::log_1(&format!("[Main] Sending Connect message to worker: {} / checkboxes", uri).into());
+                    web_sys::console::log_1(&format!("[Main] Sending Connect message to worker: {} / doom-checkboxes", uri).into());
                     send_to_worker(MainToWorker::Connect {
                         uri,
-                        database: "checkboxes".to_string(),
+                        database: "doom-checkboxes".to_string(),
                     });
                 });
                 web_sys::window()

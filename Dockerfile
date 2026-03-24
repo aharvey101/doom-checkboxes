@@ -28,6 +28,9 @@ COPY frontend-rust/ .
 # Set env var to bypass git requirement in spacetimedb-lib build.rs
 ENV SPACETIMEDB_NIX_BUILD_GIT_COMMIT="docker-build"
 
+# Clean pre-built worker binaries to force rebuild from source
+RUN rm -rf pkg/worker/*.wasm pkg/worker/*.js
+
 # Build the frontend
 RUN trunk build --release
 

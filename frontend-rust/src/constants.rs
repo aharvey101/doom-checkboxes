@@ -17,7 +17,7 @@ pub const COLOR_UNCHECKED: &str = "#000000";
 pub const COLOR_GRID: &str = "#000000";
 
 // SpacetimeDB
-pub const DATABASE_NAME: &str = "checkboxes";
+pub const DATABASE_NAME: &str = "doom-checkboxes";
 pub const SPACETIMEDB_URI_LOCAL: &str = "ws://127.0.0.1:3000";
 pub const SPACETIMEDB_URI_PROD: &str = "wss://maincloud.spacetimedb.com";
 

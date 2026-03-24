@@ -1,4 +1,4 @@
 {
   "server": "http://localhost:3000",
-  "database": "checkboxes"
+  "database": "doom-checkboxes"
 }
