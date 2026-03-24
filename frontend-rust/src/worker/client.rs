@@ -243,13 +243,29 @@ fn process_initial_rows(rows: &QueryRows) {
 
 fn process_table_update(table: &TableUpdate) {
     let name: &str = &table.table_name;
-    for rows in table.rows.iter() {
-        if let TableUpdateRows::PersistentTable(p) = rows {
-            for row in &p.inserts {
-                if name == "frame" {
-                    if let Some(data) = parse_frame(&row) { send_binary_to_main(2, &data); }
-                } else if name == "snapshot" {
-                    if let Some(state) = parse_snapshot(&row) { send_binary_to_main(1, &state); }
+
+    if name == "frame" {
+        // Only forward the latest frame — drop older ones to prevent lag
+        let mut latest: Option<Vec<u8>> = None;
+        for rows in table.rows.iter() {
+            if let TableUpdateRows::PersistentTable(p) = rows {
+                for row in &p.inserts {
+                    if let Some(data) = parse_frame(&row) {
+                        latest = Some(data);
+                    }
+                }
+            }
+        }
+        if let Some(data) = latest {
+            send_binary_to_main(2, &data);
+        }
+    } else if name == "snapshot" {
+        for rows in table.rows.iter() {
+            if let TableUpdateRows::PersistentTable(p) = rows {
+                for row in &p.inserts {
+                    if let Some(state) = parse_snapshot(&row) {
+                        send_binary_to_main(1, &state);
+                    }
                 }
             }
         }
